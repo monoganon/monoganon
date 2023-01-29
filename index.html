@@ -28,65 +28,106 @@
 	<link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;1,900&display=swap" rel="stylesheet">
 
 </head>
-
 <body>
-<style>
-
-body {
-  background-image: url('Images/background.gif');
-  background-repeat: repeat;
-}
-
-</style>
-
-<main>
-  <header>
-    <div class="center">
-      <div class="container">
-      <p class="font_8" style="font-size:92px"><span style="letter-spacing:0.1em"><a href="https://www.monoganon.com/manifesto" target="_self"><span style="text-shadow:0px 0px 6px rgb(255, 255, 255)"><span style="color:rgb(64, 50, 161)"><span style="font-family:times new roman,times,serif"><span style="font-size:92px">Monoganon</span></span></span></span></a></span></p>
-      <div class="bottom-left" style="bottom:-20px; left:-75px;"><img src="Images/star1.gif" style="width:125px"><img src="Images/comet2.gif" style="width:125px">
+  <style>
+  body {
+    background-image: url('Images/background.gif');
+    background-repeat: repeat;
+  }
+  </style>
+  <main>
+    <header class="header">
+      <div class="center container">
+        <p class="font_8" style="font-size:9vw;">
+          <a href="https://www.monoganon.com/manifesto" target="_self">
+            <span class="color">Monoganon</span>
+          </a>
+        </p>
+        <div class="bottom-left" style="bottom:-20px; left:-95px;">
+          <img src="Images/star1.gif" style="width:12vw">
+          <img src="Images/comet2.gif" style="width:12vw">
+        </div>
+        <div class="bottom-right" style="bottom:-25px; right:-100px;">
+          <img src="Images/comet.gif" style="width:13vw;">
+        </div>
       </div>
-      <div class="bottom-right"style="right:-100px; bottom:-25px;"><br /><img src="Images/comet.gif" style="width:250px;">
-      </div>
-    </div>
-  </div>
-</div>
+    </header>
 
-<div class="container">
-  <img src="Images/worm.png" alt="worm" style="width:165px">
-  <div class="centered" style="top:20%;">
-    <p class="font_8" style="font-size:15px;"><a href="https://www.monoganon.com/manifesto">
-      <span style="color:#FFFFFF">
-        <span style="font-family:times new roman,times,serif">
-          <span style="text-shadow:0px 0px 6px rgb(255, 255, 255)">
-            <span style="font-size: 15px;">We are here<br />This is Monoganon<br />We come in love and peace<br />Greetings, blessings, joy<br />
-            </span>
+    <div class="container">
+      <img src="Images/worm.png" alt="worm" style="width:15vw; position:relative;">
+      <div class="center" style="position: absolute; top: 20%; left: 0; right: 0; text-align: center;">
+        <p class="font_8" style="font-size:1vw;">
+          <a href="https://www.monoganon.com/manifesto">
+            <span class="color2">
+            We are here<br />
+            This is Monoganon<br />
+            We come in love and peace<br />
+            Greetings, blessings, joy<br />
           </span>
-        </span>
-      </span>
-    </a>
-    <div class="centered">
-    <img src="Images/tearcomet.gif" alt="tears" style="width:325px">
-  </div>
-</div>
-</div>
-
-<div class="container">
-  <div class="centered">
-    <div class="row">
-      <img src="Images/flag1.gif" alt="an animated flag of a country" style="width:150px; height:100%;">
-      <img src="Images/flag2.gif" alt="an animated flag of a country" style="width:150px; height:100%;">
-      <div class="container">
-        <audio autoplay preload="auto" loop src="sounds/nasa.mp3"></audio>
-        <button onclick="document.getElementsByTagName('audio')[0].play();">Sound on</button>
-        <button onclick="document.getElementsByTagName('audio')[0].pause();">Sound off</button>
-        <img src="Images/ogram.png" alt="ogram runes spelling monoganon">
+          </a>
+        <img src="Images/tearcomet.gif" alt="tears" id="tearImage" style="width:25vw; height:auto; position: absolute;">
       </div>
-      <img src="Images/flag3.gif" alt="an animated flag of a country" style="width:150px; height:100%;">
-      <img src="Images/flag4.gif" alt="an animated flag of a country" style="width:150px; height:100%;">
+    </div>
+    
+    <script>
+    setInterval(function(){
+      let container = document.querySelector('.container');
+      let containerWidth = container.offsetWidth;
+      let containerHeight = container.offsetHeight;
+      let tearImage = document.querySelector('#tearImage');
+      let tearImageWidth = tearImage.offsetWidth;
+      let tearImageHeight = tearImage.offsetHeight;
+      let left = Math.floor(Math.random() * (containerWidth - tearImageWidth));
+      let top = Math.floor(Math.random() * (containerHeight - tearImageHeight));
+      tearImage.style.left = left + 'px';
+      tearImage.style.top = top + 'px';
+    }, 20000);
+    </script>
+
+<!-- <script>
+      const spawnComet = () => {
+        const comet = document.createElement("img");
+        comet.src = "Images/tearcomet.gif";
+        comet.classList.add("comet");
+        comet.style.left = `${Math.random() * 100}%`;
+        comet.style.top = `${Math.random() * 100}%`;
+        comet.style.width = "25vw";
+        comet.style.height = "auto";
+        document.body.appendChild(comet);
+
+        comet.addEventListener("ended", () => {
+          comet.remove();
+        });
+      };
+
+      setInterval(spawnComet, 5000);
+    </script> -->
+    
+
+    <footer class = "footer">
+    <div class="container">
+      <div class="centered">
+        <div class="row">
+          <img src="Images/flag1.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
+          <img src="Images/flag2.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
+          <div class="container">
+            <audio autoplay loop preload="auto" src="sounds/nasa.mp3"></audio>
+            <audio autoplay loop preload="auto" src="sounds/nasa.mp3" id="audioElement"></audio>
+            <audio autoplay loop preload="auto" src="sounds/nasa.mp3" id="audioElement"></audio>
+            <button onclick="document.getElementById('audioElement').paused ? document.getElementById('audioElement').play() : document.getElementById('audioElement').pause(); this.innerHTML = document.getElementById('audioElement').paused ? '⏵' : '⏸'">⏵</button>
+
+            <img src="Images/ogram.png" alt="ogram runes spelling monoganon" style="width:15vw; height:auto;">
+          </div>
+          <img src="Images/flag3.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
+      <img src="Images/flag4.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
     </div>
   </div>
 </div>
+
+
+  
+
+</footer>
 
 
 </header>
