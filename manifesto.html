@@ -38,21 +38,6 @@ body {
   background-image: url('Images/background.gif');
   background-repeat: repeat;
 }
-img {
-    width:20%;
-    float:left;
-     margin:0;
-}
-/*Filter styles*/
-.saturate { filter: saturate(3); }
-.grayscale { filter: grayscale(100%); }
-.contrast { filter: contrast(160%); }
-.brightness { filter: brightness(0.25); }
-.blur { filter: blur(3px); }
-.invert { filter: invert(100%); }
-.sepia { filter: sepia(100%); }
-.huerotate { filter: hue-rotate(180deg); }
-.rss.opacity { filter: opacity(50%); }
 
 </style>
 
@@ -63,36 +48,36 @@ img {
 
     <div class="center">
       <div class="container">
-      <h2 class="font_2" style="font-size: 56px; line-height: 1.2em; text-align: center;"><span style="text-shadow:rgba(255, 255, 255, 0.6) 1px 1px 1px, rgba(0, 0, 0, 0.6) -1px -1px 1px;"><span style="letter-spacing: 0.4em;"><span class="color_11"><span style="font-size: 56px;"><span style="font-family: bodoni-w01-poster,bodoni-poster-w10,fantasy;">Monoganon Manifesto</span></span></span></span></span></h2>
-      <audio autoplay preload="auto" loop src="sounds/greetings2.mp3"></audio>
-      <button onclick="document.getElementsByTagName('audio')[0].play();">Sound on</button>
-      <button onclick="document.getElementsByTagName('audio')[0].pause();">Sound off</button>
-      <div class="bottom-left" style="left:-100px;">
-        <img src="Images/pig2.gif" style="width:250px;" title="invert" class="invert">
+      <h2 class="font_2" style="font-size: 4vw; line-height: 1.2em; text-align: center;"><span class="lume">Monoganon Manifesto</span></span></h2>
+      <!-- <audio autoplay preload="auto" loop src="sounds/greetings2.mp3"></audio>
+      <audio autoplay loop preload="auto" src="sounds/greetings2.mp3"></audio>
+      <audio autoplay loop preload="auto" src="sounds/greetings2.mp3" id="audioElement"></audio> -->
+      <audio autoplay loop preload="auto" src="sounds/greetings2.mp3" id="audioElement"></audio>
+      <button onclick="document.getElementById('audioElement').paused ? document.getElementById('audioElement').play() : document.getElementById('audioElement').pause(); this.innerHTML = document.getElementById('audioElement').paused ? 'Play' : 'Stop'">Play</button>
+      
+      <div class="bottom-left" style="left:-10vw;">
+        <img src="Images/pig2.gif" style="width:20vw;" title="invert" class="invert" >
       </div>
-      <div class="bottom-right" style="right:-100px">
-        <img src="Images/pig1.png" style="width:250px;"  title="invert" class="invert">
+      <div class="bottom-right" style="right:-10vw">
+        <img src="Images/pig1.png" style="width:20vw;"  title="invert" class="invert">
       </div>
     </div>
   </div>
 </div>
 </br>
+
 <div class="container">
-<p class="font_8" style="font-size:41px; line-height:1.3em; text-align:center">
-  <span style="font-size:41px">
-    <span style="letter-spacing:0.1em">
-      <span style="font-family:times new roman,times,serif">
-        <span style="text-shadow:#ffffff 0px 0px 6px">
+<p class="font_8"><span class="fancy">
           Greetings,</br>Mind Wanderer,</br>we are the five</br>dimensional floating</br>waveforms of flesh...
         </br>We live in swamps</br>of</br>highly volatile interstellar matter</br>all around  you  in THE
         <span style="font-style:italic">infinitesimal </span>
       </br>darkness of a billion tunnels and streams</br>of composite photon debris formed in the</br>
-      <span style="letter-spacing:0.7em;">great cosmic birth, </span></br></br>
-      <span style="font-family:bodoni-w01-poster,bodoni-poster-w10,fantasy; font-size:78px;">We welcome you to join us. </span></br>
-      <div id="comp-ipce81pc" class="_1Q9if" data-testid="richTextElement"><p class="font_8" style="font-size:38px; text-align:justify">
-      <p class="font_8" style="font-size:38px; text-align:justify; padding-right: 350px; padding-left: 350px"><span style="font-family:times new roman,times,serif"><span class="color_11">
-        First things first.&nbsp; We do not tolerate ABUSE! What do we mean by abuse?&nbsp; Well, if you download the entire site over and over again using a web robot, you waste bandwidth that others could use. It's also expensive: usually on any given day over half of the cost of running the site is because of three or four users who engage in this kind of behavior. For instance, in October 2013 the individual with the IP address of 52.84.213.25 used 10 percent of the site's bandwidth during that month, racking up over two million hits. That IP address is currently banned from accessing Monoganon. This is what we mean by abuse. There is no reason for one individual to access this site that many times: they downloaded every file at the site ten times over. If you really, really, really want the entire contents of the site, you should consider buying our CD-ROMs. It's a lot easier than downloading the site, believe me. Too expensive for you? We have music available to stream on most popular channels. Come on, you know you'd rather just get the disk. If you insist on downloading the site, you might want to buy a bandcamp release to defray the costs of your bad decisions. Thank you.  Please continue to page 2 for the full manifesto</span></span></span></p>
-
+      <span style="letter-spacing:0.7em;">great cosmic birth, </span></span></br></br>
+      <span class="lume">We welcome you to join us. </span></br>
+      <div>
+        <span class="plume">
+        First things first.&nbsp; We do not tolerate ABUSE! What do we mean by abuse?&nbsp; Well, if you download the entire site over and over again using a web robot, you waste bandwidth that others could use. It's also expensive: usually on any given day over half of the cost of running the site is because of three or four users who engage in this kind of behavior. For instance, in October 2013 the individual with the IP address of 52.84.213.25 used 10 percent of the site's bandwidth during that month, racking up over two million hits. That IP address is currently banned from accessing Monoganon. This is what we mean by abuse. There is no reason for one individual to access this site that many times: they downloaded every file at the site ten times over. If you really, really, really want the entire contents of the site, you should consider buying our CD-ROMs. It's a lot easier than downloading the site, believe me. Too expensive for you? We have music available to stream on most popular channels. Come on, you know you'd rather just get the disk. If you insist on downloading the site, you might want to buy a bandcamp release to defray the costs of your bad decisions. Thank you.  Please continue to <a href="http://monoganon.com/fullmanifesto">page 2</a> for the full manifesto</span></span></span></p>
+      </span>
 </div>
 </div>
 </div>

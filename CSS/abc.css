@@ -1,21 +1,43 @@
 p.font_8 {
-  font-size: 6vw;
+  font-size: 3vw;
 }
 
 @media (min-width: 720px) {
   p.font_8 {
-    font-size: 4vw;
+    font-size: 2vw;
   }
 }
+Filter styles*/
+.saturate { filter: saturate(3); }
+.grayscale { filter: grayscale(100%); }
+.contrast { filter: contrast(160%); }
+.brightness { filter: brightness(0.25); }
+.blur { filter: blur(3vw); }
+.invert { filter: invert(100%); }
+.sepia { filter: sepia(100%); }
+.huerotate { filter: hue-rotate(180deg); }
+.rss.opacity { filter: opacity(50%); }
 
 .comet {
   position: absolute;
 }
 
 button {
-  /* background-color: transparent; */
-  border: none;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+   animation: color-warp 5s ease-in-out infinite alternate;
+   background-color: transparent;
+  }
+
+  @keyframes color-warp {
+    0% {
+      background-color: transparent;
+      border: ridge whitesmoke;
+      box-shadow: 0 0 10px rgba(197, 197, 197, 0.5);
+    }
+    100% {
+      background-color: rgb(163, 163, 163);
+      border: ridge green;
+      box-shadow: 0 0 1px rgba(126, 51, 255, 0.5);
+    }
   }
 
 .color {
@@ -42,7 +64,49 @@ button {
     background-image: linear-gradient(to right, white, blue);
     animation: glow 5s ease-in-out infinite alternate;
   }
+
+  .fancy {
+    animation: color-change 1s ease-in-out infinite alternate;
+    font-family: times new roman, times, serif;
+    font-size: 4vw;
+    line-height: 1.3en;
+    letter-spacing: 0.1em;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-image: linear-gradient(to right, white, blue);
+    animation: glow 5s ease-in-out infinite alternate;
+  }
+
+  .lume {
+    animation: color-change 1s ease-in-out infinite alternate;
+    font-family: bodoni-w01-poster,bodoni-poster-w10,fantasy; 
+    font-size:6vw;
+    line-height: 1.3en;
+    letter-spacing: 0.1em;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-image: linear-gradient(to right, white, blue);
+    animation: glow 5s ease-in-out infinite alternate;
+  }
   
+  .plume {
+    animation: color-change 1s ease-in-out infinite alternate;
+    font-family:times new roman,times,serif; 
+    font-size:3vw;
+    text-align:justify; 
+    padding-right: 15vw; 
+    padding-left: 15vw;
+    line-height: 1.3en;
+    letter-spacing: 0.1em;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-image: linear-gradient(to right, white, rgb(0, 0, 0));
+    animation: glow 5s ease-in-out infinite alternate;
+  }
+
   @keyframes glow {
     from {
       text-shadow: 0px 0px 1px rgb(99, 52, 255);
@@ -74,32 +138,32 @@ button {
   color: white;
 }
 
-/* Bottom left text */
+
 .bottom-left {
   position: absolute;
-  bottom: 8px;
-  left: 16px;
+  bottom: 1vw;
+  left: 2vw;
 }
 
-/* Top left text */
+
 .top-left {
   position: absolute;
-  top: 8px;
-  left: 16px;
+  top: 1vw;
+  left: 2vw;
 }
 
-/* Top right text */
+
 .top-right {
   position: absolute;
-  top: 8px;
-  right: 16px;
+  top: 1vw;
+  right: 2vw;
 }
 
-/* Bottom right text */
+
 .bottom-right {
   position: absolute;
-  bottom: 8px;
-  right: 16px;
+  bottom: 1vw;
+  right: 2vw;
 }
 
 /* Centered text */
@@ -155,12 +219,12 @@ img {
 }
 
 body {
-  font-size: 16px;
+  font-size: 2vw;
 }
 
 @media (min-width: 480px) {
   body {
-    font-size: 18px;
+    font-size: 1vw;
   }
 }
 
