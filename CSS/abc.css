@@ -1,3 +1,5 @@
+@import url(//db.onlinewebfonts.com/c/e4a357440c07fdfa43d39f16ddde1ba6?family=BodoniW01-Poster);
+@font-face {font-family: "BodoniW01-Poster"; src: url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.eot"); src: url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.eot?#iefix") format("embedded-opentype"), url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.woff2") format("woff2"), url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.woff") format("woff"), url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.ttf") format("truetype"), url("//db.onlinewebfonts.com/t/e4a357440c07fdfa43d39f16ddde1ba6.svg#BodoniW01-Poster") format("svg"); }
 p.font_8 {
   font-size: 3vw;
 }
@@ -80,7 +82,7 @@ button {
 
   .lume {
     animation: color-change 1s ease-in-out infinite alternate;
-    font-family: bodoni-w01-poster,bodoni-poster-w10,fantasy; 
+    font-family: bodoni-mt; 
     font-size:6vw;
     line-height: 1.3en;
     letter-spacing: 0.1em;
