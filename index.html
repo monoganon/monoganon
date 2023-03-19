@@ -45,10 +45,11 @@
         </p>
         <div class="bottom-left" style="bottom:-20px; left:-95px;">
           <img src="Images/star1.gif" style="width:12vw">
-          <img src="Images/comet2.gif" style="width:12vw">
+          <a href="https://www.monoganon.com/blackhole"> <img src="Images/comet2.gif" style="width:12vw"></a>
+        
         </div>
         <div class="bottom-right" style="bottom:-25px; right:-100px;">
-          <img src="Images/comet.gif" style="width:13vw;">
+          <a href="https://www.monoganon.com/worm"> <img src="Images/comet.gif" style="width:13vw;"></a>
         </div>
       </div>
     </header>
@@ -69,7 +70,7 @@
       </div>
     </div>
     
-    <script>
+    <!-- <script>
     setInterval(function(){
       let container = document.querySelector('.container');
       let containerWidth = container.offsetWidth;
@@ -82,7 +83,7 @@
       tearImage.style.left = left + 'px';
       tearImage.style.top = top + 'px';
     }, 20000);
-    </script>
+    </script> -->
 
 <!-- <script>
       const spawnComet = () => {
@@ -135,3 +136,28 @@
 </main>
 
 </body>
+
+
+<script type="text/javascript" src="js/vendor/vue.js"></script>
+<script type="text/javascript" src="js/vendor/simplex_noise.js"></script>
+<script type="text/javascript" src="js/vendor/processing.js"></script>
+<script type="text/javascript" src="js/vendor/Pizzicato.js"></script>
+
+<script type="text/javascript" src="js/utilities.js"></script>
+<!-- document.body.addEventListener('click', function(event) {
+  let target = event.target;
+  let isLink = false;
+
+  while (target !== null) {
+    if (target.tagName === 'A') {
+      isLink = true;
+      break;
+    }
+    target = target.parentElement;
+  }
+
+  if (!isLink) {
+    window.location.href = 'blackhole.html';
+  }
+}); -->
+</html>

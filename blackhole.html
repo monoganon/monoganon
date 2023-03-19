@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Black Hole Vortex</title>
+  <script src="js/vendor/processing.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <script type="text/processing" data-processing-target="vortexCanvas">
+    
+    ArrayList particles;
+    PGraphicsJava2D glowCanvas;
+
+    void setup() {
+      size(window.innerWidth, window.innerHeight);
+      particles = new ArrayList();
+      background(0);
+      glowCanvas = (PGraphicsJava2D) createGraphics(width, height, JAVA2D);
+    }
+
+    void drawGlow() {
+      glowCanvas.beginDraw();
+      glowCanvas.background(0, 0);
+      CanvasRenderingContext2D ctx = glowCanvas.externals.context;
+      float centerX = mousePressed ? mouseX : width / 2;
+      float centerY = mousePressed ? mouseY : height / 2;
+      float glowRadius = 10;
+    
+      let gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowRadius);
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+      glowCanvas.endDraw();
+    }
+    
+    
+    
+    
+
+    void draw() {
+      background(0);
+      drawGlow();
+      image(glowCanvas, 0, 0);
+      particles.add(new Particle());
+      if (particles.size() > 200) {
+        particles.remove(0);
+      }
+
+      for (int i = 0; i < particles.size(); i++) {
+        Particle p = (Particle) particles.get(i);
+        p.update();
+        p.show();
+      }
+    }
+
+    class Particle {
+      PVector pos, vel, acc;
+      float size;
+
+      Particle() {
+        pos = new PVector(random(width), random(height));
+        vel = new PVector(0, 0);
+        acc = new PVector(0, 0);
+        size = 4;
+      }
+
+      void update() {
+        PVector forceCenter;
+        
+        if (mousePressed) {
+          forceCenter = new PVector(mouseX, mouseY);
+        } else {
+          forceCenter = new PVector(width / 2, height / 2);
+        }
+        
+        PVector force = PVector.sub(forceCenter, pos);
+        float distance = force.mag();
+        force.normalize();
+        force.mult(0.5);
+      
+        // Adding spin
+        float spinStrength = 0.1; // Adjust this value to change the spin strength
+        PVector spinForce = new PVector(-force.y, force.x);
+        spinForce.mult(spinStrength);
+      
+        acc.add(force);
+        acc.add(spinForce);
+      
+        vel.add(acc);
+        vel.limit(4);
+        pos.add(vel);
+        acc.mult(0);
+      }
+      
+      
+
+      void show() {
+        noStroke();
+        fill(255, 15);
+        ellipse(pos.x, pos.y, size, size);
+      }
+    }
+  </script>
+  <canvas id="vortexCanvas"></canvas>
+</body>
+</html>
