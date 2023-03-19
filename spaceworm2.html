@@ -90,6 +90,24 @@
   snakePart.style.top = y + 'px';
   snakePart.style.backgroundColor = 'purple';
   snakePart.classList.add('game-object');
+
+  // Create green triangles on the background
+  const triangleSize = 8;
+  const triangleSpacing = 10;
+  const numTriangles = Math.floor(tileSize / triangleSpacing);
+  for (let i = 0; i < numTriangles; i++) {
+    const triangle = document.createElement('div');
+    triangle.style.width = triangleSize + 'px';
+    triangle.style.height = triangleSize + 'px';
+    triangle.style.position = 'absolute';
+    triangle.style.backgroundColor = 'green';
+    triangle.style.transformOrigin = 'top left';
+    triangle.style.transform = `rotate(${i % 2 === 0 ? '-' : ''}45deg)`;
+    triangle.style.left = `${i * triangleSpacing}px`;
+    triangle.style.top = 0;
+    snakePart.appendChild(triangle);
+  }
+
   return snakePart;
 };
 
@@ -143,10 +161,19 @@ const moveSnake = () => {
   gameContainer.innerHTML = '';
   gameContainer.appendChild(comet);
 
-  for (const part of snake) {
-    const snakePart = createSnakePart(part.x, part.y);
+  for (let i = 0; i < snake.length; i++) {
+  const snakePart = createSnakePart(snake[i].x, snake[i].y, i === 0);
+  gameContainer.appendChild(snakePart);
+}
+
+  for (let i = 0; i < snake.length; i++) {
+    const part = snake[i];
+    const isHead = i === 0;
+    const snakePart = createSnakePart(part.x, part.y, isHead);
     gameContainer.appendChild(snakePart);
   }
+
+  changingDirection = false;
 };
 
 
@@ -270,26 +297,28 @@ const restart = () => {
 };
 
 
+let changingDirection = false;
 
-// document.getElementById('restart').addEventListener('click', restart);
+document.addEventListener('keydown', function (event) {
+  if (changingDirection) return;
+  changingDirection = true;
 
-document.addEventListener('keydown', function(event) {
-      if (event.key === 'ArrowUp' && dy === 0) {
-        dx = 0;
-        dy = -tileSize;
-      } else if (event.key === 'ArrowDown' && dy === 0) {
-        dx = 0;
-        dy = tileSize;
-      } else if (event.key === 'ArrowLeft' && dx === 0) {
-        dx = -tileSize;
-        dy = 0;
-      } else if (event.key === 'ArrowRight' && dx === 0) {
-        dx = tileSize;
-        dy = 0;
-      } else if (event.key === ' ') {
-        restart();
-      }
-    });
+  if (event.key === 'ArrowUp' && dy === 0) {
+    dx = 0;
+    dy = -tileSize;
+  } else if (event.key === 'ArrowDown' && dy === 0) {
+    dx = 0;
+    dy = tileSize;
+  } else if (event.key === 'ArrowLeft' && dx === 0) {
+    dx = -tileSize;
+    dy = 0;
+  } else if (event.key === 'ArrowRight' && dx === 0) {
+    dx = tileSize;
+    dy = 0;
+  } else if (event.key === ' ') {
+    restart();
+  }
+});
 
     let startTime;
 
