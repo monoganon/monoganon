@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    #game-container {
+      position: fixed;
+      align: center;
+      top: 5vw;
+      left: 5vw;
+      width: 90vw;
+      height: 90vh;
+      border: 1px solid rgb(255, 0, 0);
+      background-image: url('Images/background.gif');
+      background-repeat: repeat;
+      background-color: #000000;
+      overflow: hidden;
+    }
+
+    body {
+      background-image: url('Images/background.gif');
+      background-repeat: repeat;
+    }
+
+    .game-object {
+      position: absolute;
+    }
+
+    #game-over-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color:antiquewhite;
+  display: block;
+  text-align: center;
+  z-index: 100;
+}
+</style>
+</head>
+<body>
+  <div id="game-container">
+    <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
+  </div>
+  <div id="game-over-container"></div>
+  
+  <div id="game-over" style="display: none;">
+    <h2>Game Over!</h2>
+    <p>Score: <span id="final-score"></span></p>
+    <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
+    <p>Press spacebar to restart the game</p>
+  </div>
+  
+  <!-- <div id="scoreboard">
+    <h3>Scoreboard</h3>
+    <ul id="score-list"></ul>
+  </div> -->
+  
+  
+  <script>
+    const tileSize = 50;
+    const calculateContainerSize = (tileSize, percentage) => {
+    const viewportSize = Math.min(window.innerWidth, window.innerHeight);
+    const size = Math.floor((viewportSize * percentage) / tileSize) * tileSize;
+    return size;
+    };
+
+    const containerSize = calculateContainerSize(tileSize, 0.9);
+
+    const gameContainer = document.getElementById('game-container');
+    const comet = document.getElementById('comet');
+
+    const speed = 150;
+    const snake = [
+  {x: 3 * tileSize, y: 0},
+  {x: 2 * tileSize, y: 0},
+  {x: 1 * tileSize, y: 0},
+  {x: 0, y: 0}
+];
+    let dx = tileSize;
+    let dy = 0;
+
+    gameContainer.style.width = containerSize + 'px';
+    gameContainer.style.height = containerSize + 'px';
+
+    const createSnakePart = (x, y) => {
+  const snakePart = document.createElement('div');
+  snakePart.style.width = tileSize + 'px';
+  snakePart.style.height = tileSize + 'px';
+  snakePart.style.left = x + 'px';
+  snakePart.style.top = y + 'px';
+  snakePart.style.backgroundColor = 'purple';
+  snakePart.classList.add('game-object');
+  return snakePart;
+};
+
+
+
+const updateCometPosition = () => {
+  const containerWidth = gameContainer.clientWidth;
+  const containerHeight = gameContainer.clientHeight;
+  const maxGridX = Math.floor(containerWidth / tileSize) - 1;
+  const maxGridY = Math.floor(containerHeight / tileSize) - 1;
+  let x, y, isOccupied;
+
+  do {
+    x = Math.floor(Math.random() * maxGridX) * tileSize;
+    y = Math.floor(Math.random() * maxGridY) * tileSize;
+    isOccupied = snake.some(part => part.x === x && part.y === y);
+  } while (isOccupied);
+
+  comet.style.left = x + 'px';
+  comet.style.top = y + 'px';
+};
+
+
+
+
+
+const moveSnake = () => {
+  const headX = (snake[0].x + dx + containerSize) % containerSize;
+  const headY = (snake[0].y + dy + containerSize) % containerSize;
+
+  for (let i = 1; i < snake.length; i++) {
+    if (snake[i].x === headX && snake[i].y === headY) {
+      gameOver();
+      return;
+    }
+  }
+
+  if (headX === parseInt(comet.style.left) && headY === parseInt(comet.style.top)) {
+    snake.push({x: headX - dx, y: headY - dy});
+    updateCometPosition();
+  }
+
+  for (let i = snake.length - 1; i > 0; i--) {
+    snake[i].x = snake[i - 1].x;
+    snake[i].y = snake[i - 1].y;
+  }
+
+  snake[0].x = headX;
+  snake[0].y = headY;
+
+  gameContainer.innerHTML = '';
+  gameContainer.appendChild(comet);
+
+  for (const part of snake) {
+    const snakePart = createSnakePart(part.x, part.y);
+    gameContainer.appendChild(snakePart);
+  }
+};
+
+
+//     const gameOver = () => {
+//   clearInterval(gameInterval);
+//   document.getElementById('game-over').style.display = 'block';
+
+//   const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+//   const score = (snake.length - 1) * elapsedTime;
+
+//   document.getElementById('final-score').innerText = score;
+//   document.getElementById('elapsed-time').innerText = elapsedTime;
+// };
+
+const saveScore = () => {
+  const playerName = document.getElementById('player-name').value;
+  const elapsedTime = parseInt(document.getElementById('elapsed-time').innerText);
+  const score = parseInt(document.getElementById('final-score').innerText);
+
+  const storedScores = localStorage.getItem('scores');
+  const scores = storedScores ? JSON.parse(storedScores) : [];
+
+  scores.push({ name: playerName, score: score, time: elapsedTime });
+  localStorage.setItem('scores', JSON.stringify(scores));
+
+  updateScoreboard();
+};
+
+const updateScoreboard = () => {
+  const scoreList = document.getElementById('score-list');
+  scoreList.innerHTML = '';
+
+  const storedScores = localStorage.getItem('scores');
+  const scores = storedScores ? JSON.parse(storedScores) : [];
+
+  for (const { name, score } of scores) {
+    const listItem = document.createElement('li');
+    listItem.textContent = `${name}: ${score}`;
+    scoreList.appendChild(listItem);
+  }
+};
+
+const showGameOver = () => {
+  const gameoverContainer = document.getElementById('game-over-container');
+  if (!gameoverContainer) {
+    return;
+  }
+
+  gameoverContainer.innerHTML = ''; // Clear the contents of the container
+
+  const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+
+  const gameOverMessage = document.createElement('h2');
+  gameOverMessage.innerText = 'Game Over!';
+  gameoverContainer.appendChild(gameOverMessage);
+
+  const finalScoreMessage = document.createElement('p');
+  const score = (snake.length - 1) * elapsedTime;
+  finalScoreMessage.innerHTML = `Score: ${score}`;
+  gameoverContainer.appendChild(finalScoreMessage);
+
+  const elapsedTimeMessage = document.createElement('p');
+  elapsedTimeMessage.innerHTML = `Elapsed time: ${elapsedTime} seconds`;
+  gameoverContainer.appendChild(elapsedTimeMessage);
+  gameoverContainer.style.display = 'block';
+};
+
+
+
+
+
+const gameOver = () => {
+  clearInterval(gameInterval);
+  
+  const gameoverContainer = document.getElementById('game-over-container');
+  gameoverContainer.innerHTML = ''; // Clear the container's content
+
+  const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+  const score = (snake.length - 1) * elapsedTime;
+
+  const gameOverMessage = document.createElement('h2');
+  gameOverMessage.innerText = 'Game Over!';
+  gameoverContainer.appendChild(gameOverMessage);
+
+  const finalScoreMessage = document.createElement('p');
+  finalScoreMessage.innerHTML = `Score: ${score}`;
+  gameoverContainer.appendChild(finalScoreMessage);
+
+  const elapsedTimeMessage = document.createElement('p');
+  elapsedTimeMessage.innerHTML = `Elapsed time: ${elapsedTime} seconds`;
+  gameoverContainer.appendChild(elapsedTimeMessage);
+
+  const restartMessage = document.createElement('p');
+  restartMessage.innerHTML = 'Press spacebar to restart the game';
+  gameoverContainer.appendChild(restartMessage);
+
+  gameoverContainer.style.display = 'block';
+};
+
+
+const restart = () => {
+  clearInterval(gameInterval);
+  
+  const gameoverContainer = document.getElementById('game-over-container');
+  gameoverContainer.style.display = 'none'; // Hide the game-over message
+
+  // Reinitialize the snake array
+  snake.length = 0;
+  snake.push(
+    {x: 3 * tileSize, y: 0},
+    {x: 2 * tileSize, y: 0},
+    {x: 1 * tileSize, y: 0},
+    {x: 0, y: 0}
+  );
+  
+  dx = tileSize;
+  dy = 0;
+  updateCometPosition();
+  gameInterval = setInterval(moveSnake, speed);
+  startTime = new Date().getTime(); // Reset the start time
+};
+
+
+
+// document.getElementById('restart').addEventListener('click', restart);
+
+document.addEventListener('keydown', function(event) {
+      if (event.key === 'ArrowUp' && dy === 0) {
+        dx = 0;
+        dy = -tileSize;
+      } else if (event.key === 'ArrowDown' && dy === 0) {
+        dx = 0;
+        dy = tileSize;
+      } else if (event.key === 'ArrowLeft' && dx === 0) {
+        dx = -tileSize;
+        dy = 0;
+      } else if (event.key === 'ArrowRight' && dx === 0) {
+        dx = tileSize;
+        dy = 0;
+      } else if (event.key === ' ') {
+        restart();
+      }
+    });
+
+    let startTime;
+
+    const initializeGame = () => {
+  const gameContainer = document.getElementById('game-container');
+  gameContainer.style.width = containerSize + 'px';
+  gameContainer.style.height = containerSize + 'px';
+
+  updateCometPosition();
+  gameInterval = setInterval(moveSnake, speed);
+  startTime = new Date().getTime();
+};
+
+    let gameInterval;
+    initializeGame();
+
+    // document.getElementById('save-score').addEventListener('click', saveScore);
+  </script>
+</body>
+</html>
