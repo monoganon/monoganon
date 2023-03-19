@@ -28,6 +28,21 @@
   </div>
   
 
+  <div id="game-over" style="display: none;">
+    <div id="game-over" style="display: none;">
+      <h2>Game Over!</h2>
+      <p>Score: <span id="final-score"></span></p>
+      <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
+      <label for="player-name">Enter your name:</label>
+      <input type="text" id="player-name" />
+      <button id="save-score">Save Score</button>
+  </div>
+
+<div id="scoreboard">
+  <h3>Scoreboard</h3>
+  <ul id="score-list"></ul>
+</div>
+<p>Press spacebar to restart the game</p>
   <script>
     const gameContainer = document.getElementById('game-container');
     const comet = document.getElementById('comet');
@@ -78,6 +93,13 @@
         snake[i].y = snake[i - 1].y;
       }
 
+      for (let i = 1; i < snake.length; i++) {
+    if (snake[i].x === headX && snake[i].y === headY) {
+      gameOver();
+      return;
+    }
+  }
+
       snake[0].x = headX;
       snake[0].y = headY;
 
@@ -90,7 +112,59 @@
       }
     };
 
-    document.addEventListener('keydown', function(event) {
+    const gameOver = () => {
+  clearInterval(gameInterval);
+  document.getElementById('game-over').style.display = 'block';
+
+  const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+  const score = (snake.length - 1) * elapsedTime;
+
+  document.getElementById('final-score').innerText = score;
+  document.getElementById('elapsed-time').innerText = elapsedTime;
+};
+
+const saveScore = () => {
+  const playerName = document.getElementById('player-name').value;
+  const elapsedTime = parseInt(document.getElementById('elapsed-time').innerText);
+  const score = parseInt(document.getElementById('final-score').innerText);
+
+  const storedScores = localStorage.getItem('scores');
+  const scores = storedScores ? JSON.parse(storedScores) : [];
+
+  scores.push({ name: playerName, score: score, time: elapsedTime });
+  localStorage.setItem('scores', JSON.stringify(scores));
+
+  updateScoreboard();
+};
+
+const updateScoreboard = () => {
+  const scoreList = document.getElementById('score-list');
+  scoreList.innerHTML = '';
+
+  const storedScores = localStorage.getItem('scores');
+  const scores = storedScores ? JSON.parse(storedScores) : [];
+
+  for (const { name, score } of scores) {
+    const listItem = document.createElement('li');
+    listItem.textContent = `${name}: ${score}`;
+    scoreList.appendChild(listItem);
+  }
+};
+
+const restart = () => {
+  clearInterval(gameInterval);
+  document.getElementById('game-over').style.display = 'none';
+  snake.length = 1;
+  snake[0] = {x: 0, y: 0};
+  dx = tileSize;
+  dy = 0;
+  updateCometPosition();
+  gameInterval = setInterval(moveSnake, speed);
+};
+
+// document.getElementById('restart').addEventListener('click', restart);
+
+document.addEventListener('keydown', function(event) {
       if (event.key === 'ArrowUp' && dy === 0) {
         dx = 0;
         dy = -tileSize;
@@ -103,16 +177,24 @@
       } else if (event.key === 'ArrowRight' && dx === 0) {
         dx = tileSize;
         dy = 0;
+      } else if (event.key === ' ') {
+        restart();
       }
     });
 
+    let startTime;
+
     const initializeGame = () => {
-      updateCometPosition();
-      gameInterval = setInterval(moveSnake, speed);
-    };
+  updateCometPosition();
+  gameInterval = setInterval(moveSnake, speed);
+  startTime = new Date().getTime();
+  updateScoreboard();
+};
 
     let gameInterval;
     initializeGame();
+
+    // document.getElementById('save-score').addEventListener('click', saveScore);
   </script>
 </body>
 </html>

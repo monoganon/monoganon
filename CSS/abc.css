@@ -233,3 +233,29 @@ body {
 .font_8 {
   font-size: 1.5em;
 }
+
+/* #game-over,
+#scoreboard {
+  margin-top: 20px;
+}
+
+#game-over {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: none;
+  text-align: center;
+  background-color: #fff;
+  border: 1px solid #000;
+  padding: 20px;
+} */
+
+/* #game-over-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: none;
+  text-align: center;
+} */
