@@ -146,7 +146,7 @@ body {
             align-items: center;
             height: 100vh;
             margin: 0;
-            background-color: #353535;
+            background-color: #000000;
         }
 
         .game-wrapper {
@@ -181,11 +181,12 @@ body {
             height: 10vh;
             font-size: 10vw;
             font-weight: bold;
-
         }
 
         .game-object {
       position: absolute;
+      width: 50px; 
+      height: 50px;
     }
 
     #game-over-container {
@@ -208,15 +209,20 @@ body {
             }
             #game-over-container {
   position: absolute;
-  top: 20%;
+  top: 25%;
   left: 50%;
   transform: translate(-50%, -50%);
   color:antiquewhite;
   display: block;
   text-align: center;
-  font-size: 2vmax;
+  font-size: 3vmax;
   z-index: 100;
 }
+.game-object {
+      position: absolute;
+      width: 10vw;
+      height: auto;
+    }
         }
     </style>
 </head>
@@ -285,7 +291,7 @@ body {
 <!-- </div> -->
 <div class="game-wrapper">
     <div id="game-container">
-        <img id="comet" class="game-object" src="http://monoganon.com/Images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
+        <img id="comet" class="game-object" src="https://monoganon.com/Images/comet.gif" alt="comet" >
     </div>
     <div id="numpad" style="display: none;">
         <div class="numpad-row">
@@ -325,14 +331,14 @@ body {
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 let gameOverState = false; // Add this variable to keep track of the game state
 
-    const tileSize = 50;
+    const tileSize = isMobile ? 30 : 50;
     const calculateContainerSize = (tileSize, percentage) => {
     const viewportSize = Math.min(window.innerWidth, window.innerHeight);
     const size = Math.floor((viewportSize * percentage) / tileSize) * tileSize;
     return size;
     };
 
-    const containerSize = calculateContainerSize(tileSize, 0.9);
+    const containerSize = calculateContainerSize(tileSize, 1.0);
 
     const gameContainer = document.getElementById('game-container');
     const comet = document.getElementById('comet');
