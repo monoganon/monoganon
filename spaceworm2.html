@@ -167,8 +167,16 @@ body {
         #numpad {
             margin-top: 5vh;
             display: none;
+            display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 20px; /* Add some margin on top */
             
-        }
+
+
+}
 
         .numpad-row {
             display: flex;
@@ -224,6 +232,14 @@ body {
       height: auto;
     }
         }
+
+        @media (max-width: 480px) { /* Apply the style to small devices */
+  .numpad-button {
+    width: 60px;
+    height: 60px;
+    font-size: 24px;
+  }
+}
     </style>
 </head>
 
@@ -333,10 +349,12 @@ let gameOverState = false; // Add this variable to keep track of the game state
 
     const tileSize = isMobile ? 30 : 50;
     const calculateContainerSize = (tileSize, percentage) => {
-    const viewportSize = Math.min(window.innerWidth, window.innerHeight);
-    const size = Math.floor((viewportSize * percentage) / tileSize) * tileSize;
-    return size;
-    };
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight - (isMobile ? 200 : 0); // Reserve space for numpad on mobile
+  const viewportSize = Math.min(viewportWidth, viewportHeight);
+  const size = Math.floor((viewportSize * percentage) / tileSize) * tileSize;
+  return size;
+};
 
     const containerSize = calculateContainerSize(tileSize, 0.8);
 
@@ -504,7 +522,7 @@ const showGameOver = () => {
   gameoverContainer.appendChild(gameOverMessage);
 
   const finalScoreMessage = document.createElement('p');
-  const score = (snake.length - 1) * elapsedTime;
+  const score = (snake.length - 3) * 7;
   finalScoreMessage.innerHTML = `Score: ${score}`;
   gameoverContainer.appendChild(finalScoreMessage);
 
