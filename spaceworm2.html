@@ -310,7 +310,7 @@ body {
       <h2>Game Over!</h2>
       <p>Score: <span id="final-score"></span></p>
       <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
-      <p>Press spacebar to restart the game</p>
+      <p>Press any key to restart the game</p>
     </div>
   </div>
 
@@ -321,6 +321,10 @@ body {
   
   
   <script>
+// Check if the user is on a mobile device
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+let gameOverState = false; // Add this variable to keep track of the game state
+
     const tileSize = 50;
     const calculateContainerSize = (tileSize, percentage) => {
     const viewportSize = Math.min(window.innerWidth, window.innerHeight);
@@ -354,27 +358,26 @@ body {
   snakePart.style.top = y + 'px';
   snakePart.style.backgroundColor = 'purple';
   snakePart.classList.add('game-object');
-
-//   // Create green triangles on the background
-//   const triangleSize = 8;
-//   const triangleSpacing = 10;
-//   const numTriangles = Math.floor(tileSize / triangleSpacing);
-//   for (let i = 0; i < numTriangles; i++) {
-//     const triangle = document.createElement('div');
-//     triangle.style.width = triangleSize + 'px';
-//     triangle.style.height = triangleSize + 'px';
-//     triangle.style.position = 'absolute';
-//     triangle.style.backgroundColor = 'green';
-//     triangle.style.transformOrigin = 'top left';
-//     triangle.style.transform = `rotate(${i % 2 === 0 ? '-' : ''}45deg)`;
-//     triangle.style.left = `${i * triangleSpacing}px`;
-//     triangle.style.top = 0;
-//     snakePart.appendChild(triangle);
-//   }
-
   return snakePart;
 };
 
+// const gameContainer = document.getElementById('game-container');
+let lastTouchTime = 0;
+const doubleTapDelay = 300; // Time (in milliseconds) allowed between taps for a double tap
+
+if (isMobile) {
+    
+  gameContainer.addEventListener('touchstart', (event) => {
+    const currentTime = new Date().getTime();
+    const tapTimeDifference = currentTime - lastTouchTime;
+
+    if (tapTimeDifference < doubleTapDelay && tapTimeDifference > 0) {
+      restart(); // Assuming you have a 'restart()' function defined
+    }
+
+    lastTouchTime = currentTime;
+  });
+}
 
 
 const updateCometPosition = () => {
@@ -508,8 +511,8 @@ const showGameOver = () => {
 
 
 
-
 const gameOver = () => {
+    gameOverState = true;
   clearInterval(gameInterval);
   
   const gameoverContainer = document.getElementById('game-over-container');
@@ -531,7 +534,7 @@ const gameOver = () => {
   gameoverContainer.appendChild(elapsedTimeMessage);
 
   const restartMessage = document.createElement('p');
-  restartMessage.innerHTML = 'Press spacebar to restart the game';
+  restartMessage.innerHTML = 'Press any key to restart the game';
   gameoverContainer.appendChild(restartMessage);
 
   gameoverContainer.style.display = 'block';
@@ -558,12 +561,19 @@ const restart = () => {
   updateCometPosition();
   gameInterval = setInterval(moveSnake, speed);
   startTime = new Date().getTime(); // Reset the start time
+  gameOverState = false;
 };
 
 
 let changingDirection = false;
 
+
+
 document.addEventListener('keydown', function (event) {
+    if (gameOverState) {
+    restart();
+    return;
+}
   if (changingDirection) return;
   changingDirection = true;
 
@@ -583,8 +593,7 @@ document.addEventListener('keydown', function (event) {
     restart();
   }
 });
-// Check if the user is on a mobile device
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 
 if (isMobile) {
   // Show the numpad when the game starts
@@ -593,6 +602,10 @@ if (isMobile) {
   const numpadButtons = document.querySelectorAll('.numpad-button');
 
   const handleNumpadInput = (event) => {
+    if (gameOverState) {
+    restart();
+    return;
+}
   if (changingDirection) return;
   changingDirection = true;
 
