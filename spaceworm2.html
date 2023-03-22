@@ -338,7 +338,7 @@ let gameOverState = false; // Add this variable to keep track of the game state
     return size;
     };
 
-    const containerSize = calculateContainerSize(tileSize, 1.0);
+    const containerSize = calculateContainerSize(tileSize, 0.8);
 
     const gameContainer = document.getElementById('game-container');
     const comet = document.getElementById('comet');
@@ -614,7 +614,7 @@ if (isMobile) {
 }
   if (changingDirection) return;
   changingDirection = true;
-
+  navigator.vibrate(20)
   const direction = event.target.getAttribute('data-direction');
 
   if (direction === 'up' && dy === 0) {
