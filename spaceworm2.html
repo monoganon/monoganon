@@ -1,20 +1,90 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Worm 2</title>
   <style>
+/* 
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f0f0;
+    }
+
+    .main-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
     #game-container {
-      position: fixed;
+      position: relative;
+      width: 300px;
+      height: 300px;
+      border: 1px solid black;
+    }
+
+    #numpad {
+      margin-top: 20px;
+      display: none;
+    }
+
+    .numpad-row {
+      display: flex;
+      justify-content: center;
+    }
+
+    .numpad-button {
+      margin: 5px;
+    }
+
+    @media only screen and (max-width: 600px) {
+      #numpad {
+        display: flex;
+        flex-direction: column;
+      }
+    } 
+
+
+
+    .main-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+
+    #game-container {
+       position: fixed;
       align: center;
+      display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
       top: 5vw;
       left: 5vw;
       width: 90vw;
-      height: 90vh;
+      height: 90vh; 
+      position: relative;
+      width: 300px;
+      height: 300px;
+      border: 1px solid black;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
       border: 1px solid rgb(255, 0, 0);
       background-image: url('Images/background.gif');
       background-repeat: repeat;
       background-color: #000000;
-      overflow: hidden;
+       overflow: hidden; 
     }
+
 
     body {
       background-image: url('Images/background.gif');
@@ -35,25 +105,219 @@
   text-align: center;
   z-index: 100;
 }
-</style>
+
+@media only screen and (max-width: 600px) {
+  #numpad {
+    display: block;
+    text-align: center;
+    background-color: #333;
+    padding: 10px;
+    border-radius: 10px;
+  }
+  
+  .numpad-row {
+      display: inline-flex;
+    }
+
+
+  .numpad-button {
+    background-color: #666;
+    color: #fff;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin: 5px;
+    // width: 30px;
+    height: 30px;
+    margin: 5px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer; 
+  } 
+
+
+  .numpad-button:hover {
+  background-color: #e0e0e0;
+}
+} */
+
+body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #353535;
+        }
+
+        .game-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #game-container {
+            position: relative;
+            width: 90vw;
+            height: 90vh;
+            border: 1px solid rgb(200, 200, 200);
+            background-image: url('Images/background.gif');
+            background-repeat: repeat;
+        }
+
+        #numpad {
+            margin-top: 5vh;
+            display: none;
+            
+        }
+
+        .numpad-row {
+            display: flex;
+            justify-content: center;
+        }
+
+        .numpad-button {
+            margin: 5vw;
+            width: 20vw;
+            height: 10vh;
+            font-size: 10vw;
+            font-weight: bold;
+
+        }
+
+        .game-object {
+      position: absolute;
+    }
+
+    #game-over-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color:antiquewhite;
+  display: block;
+  text-align: center;
+  font-size: 2vmax;
+  z-index: 100;
+}
+
+
+        @media only screen and (max-width: 600px) {
+            #numpad {
+                display: flex;
+                flex-direction: column;
+            }
+            #game-over-container {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color:antiquewhite;
+  display: block;
+  text-align: center;
+  font-size: 2vmax;
+  z-index: 100;
+}
+        }
+    </style>
 </head>
+
 <body>
+    <!-- <div id="game-container">
+        <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
+      </div>
+      <div id="numpad" style="display: none;">
+        <div class="numpad-row">
+            <button class="numpad-button" value="7">7</button>
+            <button class="numpad-button" data-direction="up" value="8">8</button>
+            <button class="numpad-button" value="9">9</button></div>
+            <br>
+            <div class="numpad-row">
+            <button class="numpad-button" data-direction="left" value="4">4</button>
+            <button class="numpad-button" value="5">5</button>
+            <button class="numpad-button" data-direction="right" value="6">6</button></div>
+            <br>
+            <div class="numpad-row">
+            <button class="numpad-button" value="1">1</button>
+            <button class="numpad-button" data-direction="down" value="2">2</button>
+            <button class="numpad-button" value="3">3</button></div>
+            <br>
+            <div class="numpad-row">
+            <button class="numpad-button" value="#">#</button>
+            <button class="numpad-button" value="0">0</button>
+            <button class="numpad-button" value="*">*</button></div>
+          </div>
+        </div> -->
+    <!-- <div class="game-wrapper"></div>
   <div id="game-container">
     <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
-  </div>
-  <div id="game-over-container"></div>
+    </div>
+    <div id="numpad">
+        <div id="numpad" style="display: none;">
+              <div class="numpad-row">
+          <button class="numpad-button" value="7">7</button>
+          <button class="numpad-button" data-direction="up" value="8">8</button>
+          <button class="numpad-button" value="9">9</button></div>
+          <br>
+          <div class="numpad-row">
+          <button class="numpad-button" data-direction="left" value="4">4</button>
+          <button class="numpad-button" value="5">5</button>
+          <button class="numpad-button" data-direction="right" value="6">6</button></div>
+          <br>
+          <div class="numpad-row">
+          <button class="numpad-button" value="1">1</button>
+          <button class="numpad-button" data-direction="down" value="2">2</button>
+          <button class="numpad-button" value="3">3</button></div>
+          <br>
+          <div class="numpad-row">
+          <button class="numpad-button" value="#">#</button>
+          <button class="numpad-button" value="0">0</button>
+          <button class="numpad-button" value="*">*</button></div>
+        </div>
+  </div> -->
+  <!-- <div id="game-over-container"></div>
   
   <div id="game-over" style="display: none;">
     <h2>Game Over!</h2>
     <p>Score: <span id="final-score"></span></p>
     <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
     <p>Press spacebar to restart the game</p>
-  </div>
-  
-  <!-- <div id="scoreboard">
-    <h3>Scoreboard</h3>
-    <ul id="score-list"></ul>
   </div> -->
+<!-- </div> -->
+<div class="game-wrapper">
+    <div id="game-container">
+        <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
+    </div>
+    <div id="numpad" style="display: none;">
+        <div class="numpad-row">
+            <button class="numpad-button" value="7">7</button>
+            <button class="numpad-button" data-direction="up" value="8">8</button>
+            <button class="numpad-button" value="9">9</button>
+        </div>
+        <div class="numpad-row">
+            <button class="numpad-button" data-direction="left" value="4">4</button>
+            <button class="numpad-button" value="5">5</button>
+            <button class="numpad-button" data-direction="right" value="6">6</button>
+        </div>
+        <div class="numpad-row">
+            <button class="numpad-button" value="1">1</button>
+            <button class="numpad-button" data-direction="down" value="2">2</button>
+            <button class="numpad-button" value="3">3</button>
+        </div>
+    </div>
+</div>
+<div id="game-over-container">
+    <div id="game-over" style="display: none;">
+      <h2>Game Over!</h2>
+      <p>Score: <span id="final-score"></span></p>
+      <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
+      <p>Press spacebar to restart the game</p>
+    </div>
+  </div>
+
+
+</body>
+
+  
   
   
   <script>
@@ -91,22 +355,22 @@
   snakePart.style.backgroundColor = 'purple';
   snakePart.classList.add('game-object');
 
-  // Create green triangles on the background
-  const triangleSize = 8;
-  const triangleSpacing = 10;
-  const numTriangles = Math.floor(tileSize / triangleSpacing);
-  for (let i = 0; i < numTriangles; i++) {
-    const triangle = document.createElement('div');
-    triangle.style.width = triangleSize + 'px';
-    triangle.style.height = triangleSize + 'px';
-    triangle.style.position = 'absolute';
-    triangle.style.backgroundColor = 'green';
-    triangle.style.transformOrigin = 'top left';
-    triangle.style.transform = `rotate(${i % 2 === 0 ? '-' : ''}45deg)`;
-    triangle.style.left = `${i * triangleSpacing}px`;
-    triangle.style.top = 0;
-    snakePart.appendChild(triangle);
-  }
+//   // Create green triangles on the background
+//   const triangleSize = 8;
+//   const triangleSpacing = 10;
+//   const numTriangles = Math.floor(tileSize / triangleSpacing);
+//   for (let i = 0; i < numTriangles; i++) {
+//     const triangle = document.createElement('div');
+//     triangle.style.width = triangleSize + 'px';
+//     triangle.style.height = triangleSize + 'px';
+//     triangle.style.position = 'absolute';
+//     triangle.style.backgroundColor = 'green';
+//     triangle.style.transformOrigin = 'top left';
+//     triangle.style.transform = `rotate(${i % 2 === 0 ? '-' : ''}45deg)`;
+//     triangle.style.left = `${i * triangleSpacing}px`;
+//     triangle.style.top = 0;
+//     snakePart.appendChild(triangle);
+//   }
 
   return snakePart;
 };
@@ -141,7 +405,7 @@ const moveSnake = () => {
   for (let i = 1; i < snake.length; i++) {
     if (snake[i].x === headX && snake[i].y === headY) {
       gameOver();
-      return;
+    //   return;
     }
   }
 
@@ -319,6 +583,45 @@ document.addEventListener('keydown', function (event) {
     restart();
   }
 });
+// Check if the user is on a mobile device
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+if (isMobile) {
+  // Show the numpad when the game starts
+  document.getElementById('numpad').style.display = 'block';
+
+  const numpadButtons = document.querySelectorAll('.numpad-button');
+
+  const handleNumpadInput = (event) => {
+  if (changingDirection) return;
+  changingDirection = true;
+
+  const direction = event.target.getAttribute('data-direction');
+
+  if (direction === 'up' && dy === 0) {
+    dx = 0;
+    dy = -tileSize;
+  } else if (direction === 'down' && dy === 0) {
+    dx = 0;
+    dy = tileSize;
+  } else if (direction === 'left' && dx === 0) {
+    dx = -tileSize;
+    dy = 0;
+  } else if (direction === 'right' && dx === 0) {
+    dx = tileSize;
+    dy = 0;
+  }
+};
+
+numpadButtons.forEach(button => {
+  button.addEventListener('click', handleNumpadInput);
+  button.addEventListener('touchstart', handleNumpadInput);
+});
+
+}
+
+  // Show the numpad again when the game is over
+  const gameOverButton = document
 
     let startTime;
 
