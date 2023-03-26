@@ -310,6 +310,8 @@ const updateCometPosition = () => {
 
   comet.style.left = x + 'px';
   comet.style.top = y + 'px';
+
+
 };
 
 
@@ -372,12 +374,7 @@ const moveSnake = () => {
 
   gameContainer.innerHTML = '';
   gameContainer.appendChild(comet);
-
-  for (let i = 0; i < snake.length; i++) {
-  const snakePart = createSnakePart(snake[i].x, snake[i].y, i === 0);
-  gameContainer.appendChild(snakePart);
-}
-
+  
   for (let i = 0; i < snake.length; i++) {
     const part = snake[i];
     const isHead = i === 0;
@@ -555,14 +552,15 @@ if (isMobile) {
     setTimeout(restart, restartDelay);
     return;
   }
-  if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
-  queuedDirection = direction;
-}
-  if (changingDirection) return;
-  changingDirection = true;
+
+  //if (changingDirection) return;
+  //changingDirection = true;
   navigator.vibrate(20)
   const direction = event.target.getAttribute('data-direction');
 
+  if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
+  queuedDirection = direction;
+}
   if (direction === 'up' && dy === 0) {
     dx = 0;
     dy = -tileSize;
