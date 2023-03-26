@@ -5,140 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Space Worm 2</title>
   <style>
-/* 
-    body {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      background-color: #f0f0f0;
-    }
-
-    .main-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    #game-container {
-      position: relative;
-      width: 300px;
-      height: 300px;
-      border: 1px solid black;
-    }
-
-    #numpad {
-      margin-top: 20px;
-      display: none;
-    }
-
-    .numpad-row {
-      display: flex;
-      justify-content: center;
-    }
-
-    .numpad-button {
-      margin: 5px;
-    }
-
-    @media only screen and (max-width: 600px) {
-      #numpad {
-        display: flex;
-        flex-direction: column;
-      }
-    } 
-
-
-
-    .main-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    
-
-    #game-container {
-       position: fixed;
-      align: center;
-      display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-      top: 5vw;
-      left: 5vw;
-      width: 90vw;
-      height: 90vh; 
-      position: relative;
-      width: 300px;
-      height: 300px;
-      border: 1px solid black;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      border: 1px solid rgb(255, 0, 0);
-      background-image: url('Images/background.gif');
-      background-repeat: repeat;
-      background-color: #000000;
-       overflow: hidden; 
-    }
-
-
-    body {
-      background-image: url('Images/background.gif');
-      background-repeat: repeat;
-    }
-
-    .game-object {
-      position: absolute;
-    }
-
-    #game-over-container {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color:antiquewhite;
-  display: block;
-  text-align: center;
-  z-index: 100;
-}
-
-@media only screen and (max-width: 600px) {
-  #numpad {
-    display: block;
-    text-align: center;
-    background-color: #333;
-    padding: 10px;
-    border-radius: 10px;
-  }
-  
-  .numpad-row {
-      display: inline-flex;
-    }
-
-
-  .numpad-button {
-    background-color: #666;
-    color: #fff;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    margin: 5px;
-    // width: 30px;
-    height: 30px;
-    margin: 5px;
-    font-size: 20px;
-    font-weight: bold;
-    cursor: pointer; 
-  } 
-
-
-  .numpad-button:hover {
-  background-color: #e0e0e0;
-}
-} */
 
 body {
             display: flex;
@@ -244,67 +110,7 @@ body {
 </head>
 
 <body>
-    <!-- <div id="game-container">
-        <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
-      </div>
-      <div id="numpad" style="display: none;">
-        <div class="numpad-row">
-            <button class="numpad-button" value="7">7</button>
-            <button class="numpad-button" data-direction="up" value="8">8</button>
-            <button class="numpad-button" value="9">9</button></div>
-            <br>
-            <div class="numpad-row">
-            <button class="numpad-button" data-direction="left" value="4">4</button>
-            <button class="numpad-button" value="5">5</button>
-            <button class="numpad-button" data-direction="right" value="6">6</button></div>
-            <br>
-            <div class="numpad-row">
-            <button class="numpad-button" value="1">1</button>
-            <button class="numpad-button" data-direction="down" value="2">2</button>
-            <button class="numpad-button" value="3">3</button></div>
-            <br>
-            <div class="numpad-row">
-            <button class="numpad-button" value="#">#</button>
-            <button class="numpad-button" value="0">0</button>
-            <button class="numpad-button" value="*">*</button></div>
-          </div>
-        </div> -->
-    <!-- <div class="game-wrapper"></div>
-  <div id="game-container">
-    <img id="comet" class="game-object" src="images/comet.gif" alt="comet" style="width: 50px; height: 50px;">
-    </div>
-    <div id="numpad">
-        <div id="numpad" style="display: none;">
-              <div class="numpad-row">
-          <button class="numpad-button" value="7">7</button>
-          <button class="numpad-button" data-direction="up" value="8">8</button>
-          <button class="numpad-button" value="9">9</button></div>
-          <br>
-          <div class="numpad-row">
-          <button class="numpad-button" data-direction="left" value="4">4</button>
-          <button class="numpad-button" value="5">5</button>
-          <button class="numpad-button" data-direction="right" value="6">6</button></div>
-          <br>
-          <div class="numpad-row">
-          <button class="numpad-button" value="1">1</button>
-          <button class="numpad-button" data-direction="down" value="2">2</button>
-          <button class="numpad-button" value="3">3</button></div>
-          <br>
-          <div class="numpad-row">
-          <button class="numpad-button" value="#">#</button>
-          <button class="numpad-button" value="0">0</button>
-          <button class="numpad-button" value="*">*</button></div>
-        </div>
-  </div> -->
-  <!-- <div id="game-over-container"></div>
-  
-  <div id="game-over" style="display: none;">
-    <h2>Game Over!</h2>
-    <p>Score: <span id="final-score"></span></p>
-    <p>Elapsed time: <span id="elapsed-time"></span> seconds</p>
-    <p>Press spacebar to restart the game</p>
-  </div> -->
-<!-- </div> -->
+
 <div class="game-wrapper">
     <div id="game-container">
         <img id="comet" class="game-object" src="https://monoganon.com/Images/comet.gif" alt="comet" >
@@ -343,8 +149,13 @@ body {
   
   
   <script>
+let queuedDirection = null;
+    
+const restartDelay = 1500; // Delay in milliseconds before the game can be restarted
+
 // Check if the user is on a mobile device
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 let gameOverState = false; // Add this variable to keep track of the game state
 
     const tileSize = isMobile ? 30 : 50;
@@ -384,24 +195,104 @@ let gameOverState = false; // Add this variable to keep track of the game state
   snakePart.classList.add('game-object');
   return snakePart;
 };
+let isMouseDown = false;
+let mouseStartX;
+let mouseStartY;
+
+const handleMouseDown = (event) => {
+  isMouseDown = true;
+  mouseStartX = event.clientX;
+  mouseStartY = event.clientY;
+};
+
+const handleMouseMove = (event) => {
+  if (!isMouseDown) return;
+  event.preventDefault();
+};
+
+const handleMouseUp = (event) => {
+  if (!isMouseDown) return;
+  isMouseDown = false;
+
+  const mouseEndX = event.clientX;
+  const mouseEndY = event.clientY;
+
+  const diffX = mouseStartX - mouseEndX;
+  const diffY = mouseStartY - mouseEndY;
+
+  if (Math.abs(diffX) > Math.abs(diffY)) {
+    if (diffX > 0 && dx === 0) {
+      dx = -tileSize;
+      dy = 0;
+    } else if (diffX < 0 && dx === 0) {
+      dx = tileSize;
+      dy = 0;
+    }
+  } else {
+    if (diffY > 0 && dy === 0) {
+      dx = 0;
+      dy = -tileSize;
+    } else if (diffY < 0 && dy === 0) {
+      dx = 0;
+      dy = tileSize;
+    }
+  }
+};
+
+
 
 // const gameContainer = document.getElementById('game-container');
 let lastTouchTime = 0;
 const doubleTapDelay = 300; // Time (in milliseconds) allowed between taps for a double tap
 
-if (isMobile) {
-    
-  gameContainer.addEventListener('touchstart', (event) => {
-    const currentTime = new Date().getTime();
-    const tapTimeDifference = currentTime - lastTouchTime;
+let touchStartX;
+let touchStartY;
 
-    if (tapTimeDifference < doubleTapDelay && tapTimeDifference > 0) {
-      restart(); // Assuming you have a 'restart()' function defined
+const handleTouchStart = (event) => {
+  touchStartX = event.touches[0].clientX;
+  touchStartY = event.touches[0].clientY;
+};
+
+const handleTouchMove = (event) => {
+  event.preventDefault();
+};
+
+const handleTouchEnd = (event) => {
+  const touchEndX = event.changedTouches[0].clientX;
+  const touchEndY = event.changedTouches[0].clientY;
+
+  const diffX = touchStartX - touchEndX;
+  const diffY = touchStartY - touchEndY;
+
+  if (Math.abs(diffX) > Math.abs(diffY)) {
+    if (diffX > 0 && dx === 0) {
+      dx = -tileSize;
+      dy = 0;
+    } else if (diffX < 0 && dx === 0) {
+      dx = tileSize;
+      dy = 0;
     }
+  } else {
+    if (diffY > 0 && dy === 0) {
+      dx = 0;
+      dy = -tileSize;
+    } else if (diffY < 0 && dy === 0) {
+      dx = 0;
+      dy = tileSize;
+    }
+  }
+};
 
-    lastTouchTime = currentTime;
-  });
+if (isMobile) {
+  gameContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
+  gameContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
+  gameContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
 }
+
+gameContainer.addEventListener('mousedown', handleMouseDown);
+gameContainer.addEventListener('mousemove', handleMouseMove);
+gameContainer.addEventListener('mouseup', handleMouseUp);
+
 
 
 const updateCometPosition = () => {
@@ -425,9 +316,39 @@ const updateCometPosition = () => {
 
 
 
+
 const moveSnake = () => {
   const headX = (snake[0].x + dx + containerSize) % containerSize;
   const headY = (snake[0].y + dy + containerSize) % containerSize;
+
+  if (queuedDirection) {
+    if (queuedDirection === 'ArrowUp' && dy === 0) {
+      dx = 0;
+      dy = -tileSize;
+    } else if (queuedDirection === 'ArrowDown' && dy === 0) {
+      dx = 0;
+      dy = tileSize;
+    } else if (queuedDirection === 'ArrowLeft' && dx === 0) {
+      dx = -tileSize;
+      dy = 0;
+    } else if (queuedDirection === 'ArrowRight' && dx === 0) {
+      dx = tileSize;
+      dy = 0;
+    } else if (queuedDirection === 'up' && dy === 0) {
+      dx = 0;
+      dy = -tileSize;
+    } else if (queuedDirection === 'down' && dy === 0) {
+      dx = 0;
+      dy = tileSize;
+    } else if (queuedDirection === 'left' && dx === 0) {
+      dx = -tileSize;
+      dy = 0;
+    } else if (queuedDirection === 'right' && dx === 0) {
+      dx = tileSize;
+      dy = 0;
+    }
+    queuedDirection = null;
+  }
 
   for (let i = 1; i < snake.length; i++) {
     if (snake[i].x === headX && snake[i].y === headY) {
@@ -467,17 +388,6 @@ const moveSnake = () => {
   changingDirection = false;
 };
 
-
-//     const gameOver = () => {
-//   clearInterval(gameInterval);
-//   document.getElementById('game-over').style.display = 'block';
-
-//   const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
-//   const score = (snake.length - 1) * elapsedTime;
-
-//   document.getElementById('final-score').innerText = score;
-//   document.getElementById('elapsed-time').innerText = elapsedTime;
-// };
 
 const saveScore = () => {
   const playerName = document.getElementById('player-name').value;
@@ -538,6 +448,7 @@ const showGameOver = () => {
 const gameOver = () => {
     gameOverState = true;
   clearInterval(gameInterval);
+  navigator.vibrate(200)
   
   const gameoverContainer = document.getElementById('game-over-container');
   gameoverContainer.innerHTML = ''; // Clear the container's content
@@ -564,10 +475,20 @@ const gameOver = () => {
   gameoverContainer.style.display = 'block';
 };
 
+let lastRestart = 0;
 
 const restart = () => {
+  const currentTime = new Date().getTime();
+  const timeSinceLastRestart = currentTime - lastRestart;
+
+  if (timeSinceLastRestart < restartDelay) { // 1000 milliseconds = 1 second
+    return; // Don't restart if less than 1 second has passed
+  }
+
+  lastRestart = currentTime;
+
   clearInterval(gameInterval);
-  
+
   const gameoverContainer = document.getElementById('game-over-container');
   gameoverContainer.style.display = 'none'; // Hide the game-over message
 
@@ -579,7 +500,7 @@ const restart = () => {
     {x: 1 * tileSize, y: 0},
     {x: 0, y: 0}
   );
-  
+
   dx = tileSize;
   dy = 0;
   updateCometPosition();
@@ -594,10 +515,14 @@ let changingDirection = false;
 
 
 document.addEventListener('keydown', function (event) {
-    if (gameOverState) {
-    restart();
+  if (gameOverState) {
+    setTimeout(restart, restartDelay);
     return;
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+  queuedDirection = event.key;
 }
+
   if (changingDirection) return;
   changingDirection = true;
 
@@ -626,9 +551,12 @@ if (isMobile) {
   const numpadButtons = document.querySelectorAll('.numpad-button');
 
   const handleNumpadInput = (event) => {
-    if (gameOverState) {
-    restart();
+  if (gameOverState) {
+    setTimeout(restart, restartDelay);
     return;
+  }
+  if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
+  queuedDirection = direction;
 }
   if (changingDirection) return;
   changingDirection = true;
@@ -651,9 +579,14 @@ if (isMobile) {
 };
 
 numpadButtons.forEach(button => {
-  button.addEventListener('click', handleNumpadInput);
+  // Remove the 'click' event listener for mobile devices
+  if (!isMobile) {
+    button.addEventListener('click', handleNumpadInput);
+  }
+  
   button.addEventListener('touchstart', handleNumpadInput);
 });
+
 
 }
 
