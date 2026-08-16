@@ -1,113 +1,622 @@
 <!DOCTYPE html>
 <html>
 <head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Black Hole Vortex</title>
-  <script src="js/vendor/processing.js"></script>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-    }
-  </style>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
+  canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; }
+</style>
 </head>
 <body>
-  <script type="text/processing" data-processing-target="vortexCanvas">
-    
-    ArrayList particles;
-    PGraphicsJava2D glowCanvas;
+<canvas id="c"></canvas>
 
-    void setup() {
-      size(window.innerWidth, window.innerHeight);
-      particles = new ArrayList();
-      background(0);
-      glowCanvas = (PGraphicsJava2D) createGraphics(width, height, JAVA2D);
+<script>
+(function () {
+'use strict';
+
+var canvas = document.getElementById('c');
+var gl = canvas.getContext('webgl', { alpha:false, antialias:false, preserveDrawingBuffer:false })
+      || canvas.getContext('experimental-webgl', { alpha:false, antialias:false });
+if (!gl) return;
+
+var DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+var W = 1, H = 1;
+
+/* the shadow is small; the gravity well it sits in is not */
+var R_SHADOW  = 0.009;
+var R_LENS    = 0.0275;
+var GRAV      = 0.00000025;
+var CAPTURE   = 0.045;
+var CAPTURE_Z = 1.8;
+
+/* ---------------------------------------------------------------- shaders */
+
+var VERT_QUAD =
+  'attribute vec2 aPos;varying vec2 vUv;' +
+  'void main(){vUv=aPos*0.5+0.5;gl_Position=vec4(aPos,0.0,1.0);}';
+
+/* feedback. two different smears blended together:
+     - out at the edges, the frame is dragged back toward the vanishing point,
+       so fast stars streak along the way they are actually travelling
+     - near the hole, the frame is swirled and pulled in, so captured matter
+       appears to be drawn out of a star and wound into the disk
+   in the calm middle of the screen there is almost no trail at all          */
+var FRAG_FEED =
+  'precision highp float;varying vec2 vUv;' +
+  'uniform sampler2D uPrev;uniform vec2 uHole;' +
+  'uniform float uAspect,uSwirl,uLens;' +
+  'void main(){' +
+  '  vec2 asp=vec2(uAspect,1.0);' +
+  '  vec2 c=vec2(0.5);' +
+  /* --- streaks, edges only. the smear has to travel AGAINST the star, so the
+         tail is left behind it: stars fly outward, so the residue drifts back
+         toward the vanishing point. (matching their motion puts the tail in
+         front of them, which is what looked wrong.) */
+  '  vec2 ps=(vUv-c)*asp;' +
+  '  float rs=length(ps);' +
+  '  float edge=smoothstep(0.13,0.52,rs);' +
+  '  vec2 uvStar=c+(ps*(1.0+0.0045*edge))/asp;' +
+  /* --- the vortex, close in only */
+  '  vec2 ph=vUv-uHole;ph=fract(ph+0.5)-0.5;ph*=asp;' +
+  '  float rh=length(ph)+1e-5;' +
+  '  float a=uSwirl*0.028/(rh*90.0+1.0);' +
+  '  float s=sin(a),co=cos(a);' +
+  '  ph=mat2(co,-s,s,co)*ph;' +
+  /* same rule close in, but here the residue is pulled toward the hole, so a
+     star being fed on trails a thread of itself into the dark */
+  '  ph*=1.0+0.030/(rh*230.0+1.0);' +
+  '  vec2 uvHole=uHole+ph/asp;' +
+  '  float hw=exp(-rh*rh/(uLens*uLens*7.0));' +
+  '  vec2 uv=mix(uvStar,uvHole,hw);' +
+  '  float decay=mix(mix(0.28,0.66,edge),0.86,hw);' +
+  '  vec4 col=texture2D(uPrev,clamp(uv,0.0005,0.9995))*decay;' +
+  '  gl_FragColor=vec4(max(col.rgb-0.008,0.0),1.0);' +
+  '}';
+
+var VERT_PART =
+  'attribute vec2 aPos;attribute float aLum;attribute float aSize;' +
+  'varying float vLum;' +
+  'void main(){vLum=aLum;gl_PointSize=aSize;gl_Position=vec4(aPos,0.0,1.0);}';
+
+var FRAG_PART =
+  'precision mediump float;varying float vLum;' +
+  'void main(){' +
+  '  vec2 d=gl_PointCoord-0.5;' +
+  '  float m=exp(-dot(d,d)*11.0);' +
+  '  gl_FragColor=vec4(vec3(vLum*m),1.0);' +
+  '}';
+
+/* composite: lensing, refraction, photon ring, shadow. monochrome */
+var FRAG_COMP =
+  'precision highp float;varying vec2 vUv;' +
+  'uniform sampler2D uSrc;uniform vec2 uHole;' +
+  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare;' +
+  'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
+  'float samp(vec2 uv){return texture2D(uSrc,clamp(uv,0.0005,0.9995)).g;}' +
+  'void main(){' +
+  '  vec2 asp=vec2(uAspect,1.0);' +
+  /* wrapped, so the lens works across the screen edges too */
+  '  vec2 p=vUv-uHole;p=fract(p+0.5)-0.5;p*=asp;' +
+  '  float r=length(p)+1e-6;' +
+  '  vec2 dir=p/r;' +
+  '  float defl=uLens*uLens*1.9/(r*r+uLens*uLens*0.35);' +
+  '  defl=min(defl,0.42);' +
+  '  vec2 tang=vec2(-dir.y,dir.x);' +
+  '  float drag=uSpin*uLens*uLens*0.55/(r*r+uLens*uLens*0.5);' +
+  '  vec2 base=vUv-(dir*defl-tang*drag)/asp;' +
+  '  vec2 off=dir/asp*defl*0.06;' +
+  '  float l=samp(base-off)*0.34+samp(base)*0.42+samp(base+off)*0.34;' +
+  '  float dr=(r-uShadow*1.5)/(uShadow*0.30);float ring=exp(-dr*dr);' +
+  '  float db=(r-uShadow*1.05)/(uShadow*0.7);float back=exp(-db*db);' +
+  '  float dop=0.5+0.5*dot(tang,vec2(1.0,0.0))*uSpin;' +
+  '  l+=ring*(0.55+0.75*dop)*(1.0+uFlare*1.9);' +
+  '  l+=back*0.13*(1.0+uFlare*2.6);' +
+  '  float dd=(r-uShadow*3.0)/(uShadow*2.6);float disk=exp(-dd*dd);' +
+  '  l+=disk*0.06*(0.6+0.8*dop)*(1.0+uFlare*1.5);' +
+  /* the flare itself: a slender line struck through the hole while it feeds */
+  '  float fy=p.y/(uShadow*0.28);' +
+  '  float fx=p.x/(uShadow*6.0);' +
+  '  l+=exp(-fy*fy-fx*fx)*uFlare*1.15;' +
+  '  l*=smoothstep(uShadow*0.88,uShadow*1.10,r);' +
+  '  l+=(hash(vUv*vec2(1024.0,768.0)+uTime)-0.5)*0.02;' +
+  '  l*=1.0-0.5*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
+  '  gl_FragColor=vec4(vec3(l),1.0);' +
+  '}';
+
+function compile(type, src) {
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vs, fs) {
+  var p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+var progFeed = program(VERT_QUAD, FRAG_FEED);
+var progPart = program(VERT_PART, FRAG_PART);
+var progComp = program(VERT_QUAD, FRAG_COMP);
+
+var quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+
+/* ------------------------------------------------------------ framebuffers */
+
+var fbo = [null, null], tex = [null, null], cur = 0;
+
+function makeTarget(i) {
+  if (tex[i]) { gl.deleteTexture(tex[i]); gl.deleteFramebuffer(fbo[i]); }
+  var t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  var f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  tex[i] = t; fbo[i] = f;
+}
+
+function resize() {
+  W = Math.floor(window.innerWidth * DPR);
+  H = Math.floor(window.innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  makeTarget(0); makeTarget(1);
+}
+window.addEventListener('resize', resize);
+
+/* ------------------------------------------------------------------ noise */
+
+var PERM = new Uint8Array(512);
+(function () {
+  var p = [], i;
+  for (i = 0; i < 256; i++) p[i] = i;
+  for (i = 255; i > 0; i--) { var j = (Math.random()*(i+1))|0, t = p[i]; p[i] = p[j]; p[j] = t; }
+  for (i = 0; i < 512; i++) PERM[i] = p[i & 255];
+})();
+function fade(t) { return t*t*t*(t*(t*6-15)+10); }
+function grad(h, x, y) {
+  switch (h & 3) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; default: return -x - y; }
+}
+function noise2(x, y) {
+  var X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  x -= Math.floor(x); y -= Math.floor(y);
+  var u = fade(x), v = fade(y);
+  var A = PERM[X] + Y, B = PERM[X+1] + Y;
+  return (1-v)*((1-u)*grad(PERM[A],x,y)   + u*grad(PERM[B],x-1,y)) +
+             v*((1-u)*grad(PERM[A+1],x,y-1) + u*grad(PERM[B+1],x-1,y-1));
+}
+var EPS = 0.35;
+function curl(x, y, out) {
+  out[0] =  (noise2(x, y + EPS) - noise2(x, y - EPS)) / (2*EPS);
+  out[1] = -(noise2(x + EPS, y) - noise2(x - EPS, y)) / (2*EPS);
+}
+
+/* screen wraps, so always take the shortest way round */
+function wrap(d) { return d - Math.round(d); }
+
+/* ------------------------------------------------------------------ bodies
+
+   roles:  PLAIN     a lone star, drifts by on its own
+           LEAD      the anchor of a constellation, carries its depth
+           MEMBER    a star pinned at a fixed offset from its LEAD
+           SUN       the anchor of a little solar system
+           PLANET    a small dot circling its SUN
+   any of them can be captured, at which point it leaves its group behind. */
+
+var PLAIN = 0, LEAD = 1, MEMBER = 2, SUN = 3, PLANET = 4;
+var STAR = 0, CAUGHT = 1;
+
+var SYSTEMS = 46, PLANETS_PER = 3;
+var CONSTS  = 16, STARS_PER  = 7;
+var SYS_SLOTS = SYSTEMS * (1 + PLANETS_PER);
+var CON_SLOTS = CONSTS * STARS_PER;
+var COUNT = 6000;
+
+var state  = new Uint8Array(COUNT);
+var role   = new Uint8Array(COUNT);
+var lead   = new Int32Array(COUNT);      /* index of the group anchor */
+var ox     = new Float32Array(COUNT);    /* offset from the anchor, world units */
+var oy     = new Float32Array(COUNT);
+var orbR   = new Float32Array(COUNT);    /* planets: orbit radius and phase */
+var orbP   = new Float32Array(COUNT);
+var orbS   = new Float32Array(COUNT);
+var sx = new Float32Array(COUNT), sy = new Float32Array(COUNT), sz = new Float32Array(COUNT);
+var px = new Float32Array(COUNT), py = new Float32Array(COUNT);
+var vx = new Float32Array(COUNT), vy = new Float32Array(COUNT);
+var mag  = new Float32Array(COUNT);
+var seed = new Float32Array(COUNT);
+
+var verts = new Float32Array(COUNT * 4);
+var vbuf = gl.createBuffer();
+
+var FOV = 0.30, NEAR = 0.06, FAR = 3.2;
+
+function placeAnchor(i, deep) {
+  var a = Math.random() * Math.PI * 2;
+  var d = 0.15 + Math.random() * 1.5;
+  sx[i] = Math.cos(a) * d;
+  sy[i] = Math.sin(a) * d;
+  sz[i] = deep ? FAR * (0.55 + Math.random() * 0.45) : NEAR + Math.random() * (FAR - NEAR);
+  seed[i] = Math.random() * 1000;
+  state[i] = STAR;
+}
+
+function bornPlain(i, deep) {
+  placeAnchor(i, deep);
+  role[i] = PLAIN; lead[i] = i;
+  mag[i] = 0.12 + Math.random() * 0.62;
+}
+
+/* a constellation: one anchor and a handful of stars in a fixed figure */
+function bornConstellation(c, deep) {
+  var base = SYS_SLOTS + c * STARS_PER;
+  placeAnchor(base, deep);
+  role[base] = LEAD; lead[base] = base;
+  mag[base] = 0.35 + Math.random() * 0.5;
+  ox[base] = 0; oy[base] = 0;
+  var spread = 0.10 + Math.random() * 0.22;
+  for (var k = 1; k < STARS_PER; k++) {
+    var i = base + k;
+    role[i] = MEMBER; lead[i] = base; state[i] = STAR;
+    ox[i] = (Math.random()*2-1) * spread;
+    oy[i] = (Math.random()*2-1) * spread;
+    mag[i] = 0.22 + Math.random() * 0.5;
+    seed[i] = Math.random() * 1000;
+  }
+}
+
+/* a solar system: a bright sun with small dots going round it */
+function bornSystem(s, deep) {
+  var base = s * (1 + PLANETS_PER);
+  placeAnchor(base, deep);
+  role[base] = SUN; lead[base] = base;
+  mag[base] = 0.9 + Math.random() * 0.2;
+  for (var k = 1; k <= PLANETS_PER; k++) {
+    var i = base + k;
+    role[i] = PLANET; lead[i] = base; state[i] = STAR;
+    orbR[i] = 0.020 + k * 0.016 + Math.random() * 0.008;
+    orbP[i] = Math.random() * Math.PI * 2;
+    orbS[i] = (0.55 - k * 0.12) * (Math.random() < 0.5 ? 1 : -1);
+    mag[i] = 0.30 + Math.random() * 0.25;
+    seed[i] = Math.random() * 1000;
+  }
+}
+
+function rebirth(i, deep) {
+  /* whatever it was, put its whole group back out in the deep */
+  var l = lead[i];
+  if (role[l] === SUN) bornSystem(l / (1 + PLANETS_PER) | 0, deep);
+  else if (role[l] === LEAD) bornConstellation((l - SYS_SLOTS) / STARS_PER | 0, deep);
+  else bornPlain(i, deep);
+}
+
+var hole = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
+var target = { x: 0.5, y: 0.5 };
+var dragging = false, spin = 1;
+var captureFlash = 0, consuming = 0, flare = 0;
+
+/* crossing an edge knocks the drone onto the next step of the ladder */
+var STEPS = [0, 0.5, -0.5, 1, -1, 1.5];
+var stepAt = 0, jump = 1;
+
+function capture(i, x, y) {
+  state[i] = CAUGHT;
+  px[i] = x; py[i] = y;
+  var dx = wrap(x - hole.x) * (W / H), dy = wrap(y - hole.y);
+  var r = Math.sqrt(dx*dx + dy*dy) || 1e-4;
+  var orbit = Math.sqrt(GRAV / (r + 0.01)) * (0.92 + Math.random() * 0.16);
+  vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002;
+  vy[i] =  dx / r * orbit + (Math.random()-0.5) * 0.0002;
+  captureFlash += role[i] === SUN ? 1.8 : 0.35;
+}
+
+(function seedSky() {
+  for (var s = 0; s < SYSTEMS; s++) bornSystem(s, false);
+  for (var c = 0; c < CONSTS; c++) bornConstellation(c, false);
+  for (var i = SYS_SLOTS + CON_SLOTS; i < COUNT; i++) bornPlain(i, false);
+})();
+
+/* ------------------------------------------------------------- the pointer */
+
+var lastPtr = { x: 0.5, y: 0.5, t: 0 }, ptrVel = { x: 0, y: 0 };
+
+function pointer(e) {
+  var t = e.touches ? e.touches[0] : e;
+  var nx = t.clientX / window.innerWidth;
+  var ny = 1 - t.clientY / window.innerHeight;
+  var now = performance.now();
+  var dt = Math.max(now - lastPtr.t, 1);
+  ptrVel.x = ptrVel.x * 0.6 + wrap(nx - lastPtr.x) / dt * 0.4;
+  ptrVel.y = ptrVel.y * 0.6 + wrap(ny - lastPtr.y) / dt * 0.4;
+  lastPtr.x = nx; lastPtr.y = ny; lastPtr.t = now;
+  target.x = nx; target.y = ny;
+}
+canvas.addEventListener('pointerdown', function (e) {
+  dragging = true; ptrVel.x = ptrVel.y = 0;
+  lastPtr.t = performance.now(); lastPtr.x = target.x; lastPtr.y = target.y;
+  pointer(e);
+  if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+  flare += 0.45;                       /* a little pulse of appetite */
+  audio.start();
+});
+canvas.addEventListener('pointermove', function (e) { if (dragging) pointer(e); });
+function release() {
+  if (!dragging) return;
+  dragging = false;
+  /* let go while moving and it sails off, wrapping round the screen */
+  hole.vx += ptrVel.x * 9; hole.vy += ptrVel.y * 9;
+}
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
+
+/* ------------------------------------------------------------------ audio */
+
+var audio = (function () {
+  var ctx = null, started = false;
+  var droneA, droneB, sub, hum, lp, bp, noiseGain, pan, master, droneGain;
+
+  var ROOT = 29.135;          /* B flat */
+  var BEAT = 1 / 62;
+  var MICROTONE = 0.13;       /* about three quarters of a semitone either way */
+
+  function noiseBuffer(c) {
+    var len = c.sampleRate * 3, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random()*2-1) * (Math.random() < 0.006 ? 1 : 0.2);
+    return b;
+  }
+
+  function start() {
+    if (started) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    started = true;
+    ctx = new AC();
+
+    master = ctx.createGain(); master.gain.value = 0;
+    pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (pan) { master.connect(pan); pan.connect(ctx.destination); }
+    else master.connect(ctx.destination);
+
+    lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.value = 120; lp.Q.value = 4;
+    lp.connect(master);
+
+    droneA = ctx.createOscillator(); droneA.type = 'sawtooth'; droneA.frequency.value = ROOT;
+    droneB = ctx.createOscillator(); droneB.type = 'sawtooth'; droneB.frequency.value = ROOT + BEAT;
+    droneGain = ctx.createGain(); droneGain.gain.value = 0.22;
+    droneA.connect(droneGain); droneB.connect(droneGain); droneGain.connect(lp);
+    droneA.start(); droneB.start();
+
+    /* the body of the thing: root sine, plus a hum an octave under it */
+    sub = ctx.createOscillator(); sub.type = 'sine'; sub.frequency.value = ROOT;
+    var sg = ctx.createGain(); sg.gain.value = 0.30;
+    sub.connect(sg); sg.connect(master); sub.start();
+
+    hum = ctx.createOscillator(); hum.type = 'sine'; hum.frequency.value = ROOT * 0.5;
+    var hg = ctx.createGain(); hg.gain.value = 0.34;
+    hum.connect(hg); hg.connect(master); hum.start();
+
+    /* the pulse: one breath every seventy-odd seconds, nothing faster */
+    var lfoF = ctx.createOscillator(); lfoF.type = 'sine'; lfoF.frequency.value = 1 / 74;
+    var lfoFg = ctx.createGain(); lfoFg.gain.value = 70;
+    lfoF.connect(lfoFg); lfoFg.connect(lp.frequency); lfoF.start();
+
+    var lfoA = ctx.createOscillator(); lfoA.type = 'sine'; lfoA.frequency.value = 1 / 93;
+    var lfoAg = ctx.createGain(); lfoAg.gain.value = 0.07;
+    lfoA.connect(lfoAg); lfoAg.connect(droneGain.gain); lfoA.start();
+
+    var src = ctx.createBufferSource();
+    src.buffer = noiseBuffer(ctx); src.loop = true;
+    bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 1400; bp.Q.value = 0.7;
+    noiseGain = ctx.createGain(); noiseGain.gain.value = 0.05;
+    src.connect(bp); bp.connect(noiseGain); noiseGain.connect(master);
+    src.start();
+
+    master.gain.linearRampToValueAtTime(0.9, ctx.currentTime + 8);
+  }
+
+  function update(hx, hy, eat, bending, jump) {
+    if (!started || !ctx) return;
+    var t = ctx.currentTime;
+    /* the bend follows the hand while dragging, and drifts back slowly after */
+    var f = ROOT * jump * Math.pow(2, (hy - 0.5) * MICROTONE);
+    var k = bending ? 0.25 : 5;
+    droneA.frequency.setTargetAtTime(f, t, k);
+    droneB.frequency.setTargetAtTime(f + BEAT, t, k);
+    sub.frequency.setTargetAtTime(f, t, k);
+    hum.frequency.setTargetAtTime(f * 0.5, t, k);
+    lp.frequency.setTargetAtTime(85 + hx * 300, t, 4);
+    bp.frequency.setTargetAtTime(500 + hx * 2600, t, 3);
+    if (pan) pan.pan.setTargetAtTime((hx - 0.5) * 1.4, t, 3);
+    noiseGain.gain.setTargetAtTime(0.05 + Math.min(eat, 1) * 0.30, t, 0.35);
+  }
+
+  return { start: start, update: update };
+})();
+
+document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.start(); });
+
+/* ------------------------------------------------------------------- loop */
+
+var c2 = [0, 0], time = 0;
+
+function frame(ms) {
+  requestAnimationFrame(frame);
+  var now = ms * 0.001;
+  var dt = Math.min(now - time, 0.05) || 0.016;
+  time = now;
+
+  if (dragging) {
+    hole.vx = hole.vx * 0.965 + wrap(target.x - hole.x) * 0.0016;
+    hole.vy = hole.vy * 0.965 + wrap(target.y - hole.y) * 0.0016;
+  } else {
+    hole.vx *= 0.994; hole.vy *= 0.994;
+  }
+  hole.x += hole.vx; hole.y += hole.vy;
+  /* thrown off one side, it comes back in the other */
+  if (hole.x < 0 || hole.x >= 1 || hole.y < 0 || hole.y >= 1) {
+    stepAt = (stepAt + 1) % STEPS.length;
+    jump = Math.pow(2, STEPS[stepAt] / 12);
+    hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
+  }
+
+  var speed = Math.sqrt(hole.vx*hole.vx + hole.vy*hole.vy);
+  captureFlash *= 0.94;
+  consuming += (Math.min(captureFlash * 0.5, 1.4) - consuming) * 0.06;
+  /* mostly dark; it brightens when prodded, when moving, and when feeding */
+  flare = flare * 0.93 + consuming * 0.020 + Math.min(speed * 55, 0.5) * 0.030;
+  if (flare > 0.9) flare = 0.9;
+  audio.update(hole.x, hole.y, consuming, dragging, jump);
+
+  var aspect = W / H;
+
+  for (var i = 0; i < COUNT; i++) {
+    var o = i * 4, x, y, lum, size, r = 1;
+
+    if (state[i] === STAR) {
+      var l = lead[i], wx, wy, wz;
+
+      if (l === i) {
+        /* anchors carry the depth; everything else rides along */
+        sz[i] -= dt * 0.055;
+        if (sz[i] < NEAR) { rebirth(i, true); }
+        wx = sx[i]; wy = sy[i]; wz = sz[i];
+      } else if (role[i] === PLANET) {
+        orbP[i] += orbS[i] * dt;
+        wx = sx[l] + Math.cos(orbP[i]) * orbR[i];
+        wy = sy[l] + Math.sin(orbP[i]) * orbR[i] * 0.45;   /* seen near edge-on */
+        wz = sz[l];
+      } else {
+        wx = sx[l] + ox[i]; wy = sy[l] + oy[i]; wz = sz[l];
+      }
+
+      if (wz < NEAR) { verts[o] = -2; verts[o+1] = -2; verts[o+2] = 0; verts[o+3] = 1; continue; }
+      var iz = 1 / wz;
+      x = 0.5 + wx * iz * FOV / aspect;
+      y = 0.5 + wy * iz * FOV;
+      if (x < -0.4 || x > 1.4 || y < -0.4 || y > 1.4) {
+        if (l === i) rebirth(i, true);
+        verts[o] = -2; verts[o+1] = -2; verts[o+2] = 0; verts[o+3] = 1; continue;
+      }
+
+      if (wz < CAPTURE_Z) {
+        var ddx = wrap(x - hole.x) * aspect, ddy = wrap(y - hole.y);
+        if (ddx*ddx + ddy*ddy < CAPTURE*CAPTURE) { capture(i, x, y); continue; }
+      }
+
+      lum = mag[i] * Math.min(1, iz * 0.55) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
+      size = (role[i] === SUN ? 2.4 : role[i] === PLANET ? 0.8 : 1.0) * (0.7 + iz * 0.5) * DPR;
+    } else {
+      var dx = wrap(hole.x - px[i]) * aspect, dy = wrap(hole.y - py[i]);
+      var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
+      var ux = dx / r, uy = dy / r;
+
+      var g = GRAV / (r2 + 0.0009);
+      vx[i] += ux / aspect * g; vy[i] += uy * g;
+
+      curl(px[i]*3.4 + seed[i]*0.01, py[i]*3.4 + time*0.05, c2);
+      var turb = 0.0000060 * Math.min(1, r * 4.0);
+      vx[i] += c2[0] * turb; vy[i] += c2[1] * turb;
+
+      vx[i] *= 0.9995; vy[i] *= 0.9995;
+      px[i] += vx[i]; py[i] += vy[i];
+      px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
+
+      if (r < R_SHADOW * 0.85) {
+        captureFlash += role[i] === SUN ? 2.2 : 0.5;
+        flare += role[i] === SUN ? 0.10 : 0.012;
+        rebirth(i, true); continue;
+      }
+      if (r > 0.62) { rebirth(i, true); continue; }
+
+      x = px[i]; y = py[i];
+      var sp = Math.abs(vx[i]) + Math.abs(vy[i]);
+      var near = Math.min(1, R_LENS * 1.4 / r);
+      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) + sp * 120);
+      size = (0.9 + near * 3.0) * DPR;
     }
 
-    void drawGlow() {
-      glowCanvas.beginDraw();
-      glowCanvas.background(0, 0);
-      CanvasRenderingContext2D ctx = glowCanvas.externals.context;
-      float centerX = mousePressed ? mouseX : width / 2;
-      float centerY = mousePressed ? mouseY : height / 2;
-      float glowRadius = 10;
-    
-      let gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowRadius);
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, width, height);
-      glowCanvas.endDraw();
-    }
-    
-    
-    
-    
+    verts[o]   = x * 2 - 1;
+    verts[o+1] = y * 2 - 1;
+    verts[o+2] = lum;
+    verts[o+3] = size;
+  }
 
-    void draw() {
-      background(0);
-      drawGlow();
-      image(glowCanvas, 0, 0);
-      particles.add(new Particle());
-      if (particles.size() > 200) {
-        particles.remove(0);
-      }
+  /* ---- feedback */
+  var src = cur, dst = 1 - cur;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[dst]);
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
+  gl.useProgram(progFeed);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  var aQ = gl.getAttribLocation(progFeed, 'aPos');
+  gl.enableVertexAttribArray(aQ); gl.vertexAttribPointer(aQ, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[src]);
+  gl.uniform1i(gl.getUniformLocation(progFeed, 'uPrev'), 0);
+  gl.uniform2f(gl.getUniformLocation(progFeed, 'uHole'), hole.x, hole.y);
+  gl.uniform1f(gl.getUniformLocation(progFeed, 'uAspect'), aspect);
+  gl.uniform1f(gl.getUniformLocation(progFeed, 'uSwirl'), spin);
+  gl.uniform1f(gl.getUniformLocation(progFeed, 'uLens'), R_LENS);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-      for (int i = 0; i < particles.size(); i++) {
-        Particle p = (Particle) particles.get(i);
-        p.update();
-        p.show();
-      }
-    }
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
 
-    class Particle {
-      PVector pos, vel, acc;
-      float size;
+  /* ---- bodies */
+  gl.useProgram(progPart);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+  var aP = gl.getAttribLocation(progPart, 'aPos');
+  var aL = gl.getAttribLocation(progPart, 'aLum');
+  var aS = gl.getAttribLocation(progPart, 'aSize');
+  gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 16, 0);
+  gl.enableVertexAttribArray(aL); gl.vertexAttribPointer(aL, 1, gl.FLOAT, false, 16, 8);
+  gl.enableVertexAttribArray(aS); gl.vertexAttribPointer(aS, 1, gl.FLOAT, false, 16, 12);
+  gl.drawArrays(gl.POINTS, 0, COUNT);
 
-      Particle() {
-        pos = new PVector(random(width), random(height));
-        vel = new PVector(0, 0);
-        acc = new PVector(0, 0);
-        size = 4;
-      }
+  /* ---- composite */
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
+  gl.useProgram(progComp);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  var aQ2 = gl.getAttribLocation(progComp, 'aPos');
+  gl.enableVertexAttribArray(aQ2); gl.vertexAttribPointer(aQ2, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[dst]);
+  gl.uniform1i(gl.getUniformLocation(progComp, 'uSrc'), 0);
+  gl.uniform2f(gl.getUniformLocation(progComp, 'uHole'), hole.x, hole.y);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uAspect'), aspect);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uShadow'), R_SHADOW);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uLens'), R_LENS);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uTime'), time);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uSpin'), spin);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uFlare'), flare);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-      void update() {
-        PVector forceCenter;
-        
-        if (mousePressed) {
-          forceCenter = new PVector(mouseX, mouseY);
-        } else {
-          forceCenter = new PVector(width / 2, height / 2);
-        }
-        
-        PVector force = PVector.sub(forceCenter, pos);
-        float distance = force.mag();
-        force.normalize();
-        force.mult(0.5);
-      
-        // Adding spin
-        float spinStrength = 0.1; // Adjust this value to change the spin strength
-        PVector spinForce = new PVector(-force.y, force.x);
-        spinForce.mult(spinStrength);
-      
-        acc.add(force);
-        acc.add(spinForce);
-      
-        vel.add(acc);
-        vel.limit(4);
-        pos.add(vel);
-        acc.mult(0);
-      }
-      
-      
+  cur = dst;
+}
 
-      void show() {
-        noStroke();
-        fill(255, 15);
-        ellipse(pos.x, pos.y, size, size);
-      }
-    }
-  </script>
-  <canvas id="vortexCanvas"></canvas>
+resize();
+requestAnimationFrame(frame);
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+
 </body>
 </html>
