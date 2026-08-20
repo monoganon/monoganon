@@ -7,25 +7,15 @@
   <title>Black Hole Vortex</title>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
-  canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; }
-  /* what is left of the page once it has been eaten */
-  #end { position:fixed; left:0; top:0; right:0; bottom:0; background:#fff;
-         display:flex; align-items:center; justify-content:center; visibility:hidden; }
-  #end a { font-family:"Courier New",courier,monospace; font-size:13px;
-           letter-spacing:0.42em; text-transform:uppercase; color:#000;
-           text-decoration:none; border-bottom:1px solid #000; padding-bottom:3px;
-           opacity:0; transition:opacity 3.5s ease-in; }
-  body.over #end { visibility:visible; }
-  body.over canvas { display:none; }
-  body.lit #end a { opacity:1; }
+  canvas { position:fixed; left:0; top:0; display:block; width:100vw; height:100vh;
+           touch-action:none; cursor:crosshair; }
+  /* the white side of it, where the spider is */
+  #w { background:#fff; display:none; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-
-<!-- THE FAR SIDE. the one thing on the other side of the hole:
-     change the href and the words to wherever this should lead. -->
-<div id="end"><a href="index.html">monoganon</a></div>
+<canvas id="w"></canvas>
 
 <script>
 (function () {
@@ -59,9 +49,12 @@ var GRAV     = GRAV0     * S * S * S;   /* keeps the orbits turning at one rate 
 var CAPTURE  = CAPTURE0  * S;
 var CAPTURE_Z = 1.8;                    /* how far back into the deep it reaches */
 
-/* the end: white, and one way out */
-var ending = false, endT = 0, white = 0, over = false;
+/* the turn: the dark goes white, and the white is where the spider lives */
+var ending = false, endT = 0, white = 0;
 var WHITEOUT = 2.8;
+
+var SPACE = 0, WEB = 1;
+var phase = SPACE;
 
 /* ---------------------------------------------------------------- shaders */
 
@@ -125,7 +118,7 @@ var FRAG_PART =
 var FRAG_COMP =
   'precision highp float;varying vec2 vUv;' +
   'uniform sampler2D uSrc;uniform vec2 uHole;' +
-  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare,uSpark,uWhite;' +
+  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare,uSpark,uWhite,uBang;' +
   'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
   'float samp(vec2 uv){return texture2D(uSrc,clamp(uv,0.0005,0.9995)).g;}' +
   'void main(){' +
@@ -156,8 +149,11 @@ var FRAG_COMP =
   /* while it is still barely there it reads as a plain speck of light */
   '  float sp=r/0.0048;' +
   '  l+=exp(-sp*sp)*uSpark*1.5;' +
+  /* the annihilation: a wall of light that falls in on itself */
+  '  float br=0.05+0.40*uBang;' +
+  '  l+=uBang*uBang*1.9*exp(-r*r/(br*br));' +
   '  l+=(hash(vUv*vec2(1024.0,768.0)+uTime)-0.5)*0.02;' +
-  '  l*=1.0-0.5*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
+  '  l*=1.0-0.42*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
   /* the end. the dark turns over and comes out the other way: a white front
      opens at the hole and runs out past the corners of the page */
   '  float mx=length(asp)*0.5;' +
@@ -211,11 +207,20 @@ function makeTarget(i) {
   tex[i] = t; fbo[i] = f;
 }
 
+function clearTargets() {
+  for (var i = 0; i < 2; i++) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[i]);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
 function resize() {
   W = Math.floor(window.innerWidth * DPR);
   H = Math.floor(window.innerHeight * DPR);
   canvas.width = W; canvas.height = H;
   makeTarget(0); makeTarget(1);
+  web.resize();
 }
 window.addEventListener('resize', resize);
 
@@ -265,7 +270,9 @@ var SYSTEMS = 46, PLANETS_PER = 3;
 var CONSTS  = 16, STARS_PER  = 7;
 var SYS_SLOTS = SYSTEMS * (1 + PLANETS_PER);
 var CON_SLOTS = CONSTS * STARS_PER;
-var COUNT = 6000;
+/* as many as the machine will stand: the annihilation needs the room */
+var COUNT = (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+             window.innerWidth * window.innerHeight < 380000) ? 7000 : 14000;
 
 var state  = new Uint8Array(COUNT);
 var role   = new Uint8Array(COUNT);
@@ -299,7 +306,7 @@ function placeAnchor(i, deep) {
 function bornPlain(i, deep) {
   placeAnchor(i, deep);
   role[i] = PLAIN; lead[i] = i;
-  mag[i] = 0.12 + Math.random() * 0.62;
+  mag[i] = 0.24 + Math.random() * 0.70;
 }
 
 /* a constellation: one anchor and a handful of stars in a fixed figure */
@@ -307,7 +314,7 @@ function bornConstellation(c, deep) {
   var base = SYS_SLOTS + c * STARS_PER;
   placeAnchor(base, deep);
   role[base] = LEAD; lead[base] = base;
-  mag[base] = 0.35 + Math.random() * 0.5;
+  mag[base] = 0.48 + Math.random() * 0.5;
   ox[base] = 0; oy[base] = 0;
   var spread = 0.10 + Math.random() * 0.22;
   for (var k = 1; k < STARS_PER; k++) {
@@ -315,7 +322,7 @@ function bornConstellation(c, deep) {
     role[i] = MEMBER; lead[i] = base; state[i] = STAR;
     ox[i] = (Math.random()*2-1) * spread;
     oy[i] = (Math.random()*2-1) * spread;
-    mag[i] = 0.22 + Math.random() * 0.5;
+    mag[i] = 0.34 + Math.random() * 0.52;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -332,7 +339,7 @@ function bornSystem(s, deep) {
     orbR[i] = 0.020 + k * 0.016 + Math.random() * 0.008;
     orbP[i] = Math.random() * Math.PI * 2;
     orbS[i] = (0.55 - k * 0.12) * (Math.random() < 0.5 ? 1 : -1);
-    mag[i] = 0.30 + Math.random() * 0.25;
+    mag[i] = 0.38 + Math.random() * 0.28;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -349,6 +356,7 @@ var hole = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
 var target = { x: 0.5, y: 0.5 };
 var dragging = false, spin = 1;
 var captureFlash = 0, consuming = 0, flare = 0;
+var bangT = 0, bangFlash = 0;
 
 /* crossing an edge knocks the drone onto the next step of the ladder */
 var STEPS = [0, 0.5, -0.5, 1, -1, 1.5];
@@ -488,8 +496,8 @@ var audio = (function () {
     noiseGain.gain.setTargetAtTime(0.05 + grown * 0.11 + Math.min(eat, 1) * 0.30, t, 0.35);
   }
 
-  /* the last of it: the noise swells over the drone, then nothing at all */
-  function end() {
+  /* the noise swells over the drone and then the white takes the sound with it */
+  function hush() {
     if (!started || !ctx || done) return;
     done = true;
     var t = ctx.currentTime;
@@ -499,10 +507,37 @@ var audio = (function () {
     master.gain.cancelScheduledValues(t);
     master.gain.setTargetAtTime(1.0, t, 0.8);
     master.gain.setTargetAtTime(0.0001, t + 2.0, 0.55);
-    setTimeout(function () { try { ctx.close(); } catch (e) {} }, 7000);
   }
 
-  return { start: start, update: update, end: end };
+  /* and the annihilation gives it back */
+  function wake() {
+    if (!started || !ctx) { start(); return; }
+    done = false;
+    var t = ctx.currentTime;
+    noiseGain.gain.cancelScheduledValues(t);
+    noiseGain.gain.setValueAtTime(0.9, t);
+    noiseGain.gain.setTargetAtTime(0.05, t + 0.3, 1.6);
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(0.0001, t);
+    master.gain.linearRampToValueAtTime(0.9, t + 1.2);
+  }
+
+  /* a thread going taut. the only sound in the white, one per knot */
+  function tick(v) {
+    if (!started || !ctx) return;
+    var t = ctx.currentTime;
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(900 + v * 1300, t);
+    o.frequency.exponentialRampToValueAtTime(420 + v * 500, t + 0.6);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.95);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t); o.stop(t + 1.0);
+  }
+
+  return { start: start, update: update, hush: hush, wake: wake, tick: tick };
 })();
 
 document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.start(); });
@@ -511,13 +546,15 @@ document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.sta
 
 var c2 = [0, 0], time = 0;
 
-function frame(ms) {
-  if (over) return;                    /* nothing left to draw */
-  requestAnimationFrame(frame);
+function tick(ms) {
+  requestAnimationFrame(tick);
   var now = ms * 0.001;
   var dt = Math.min(now - time, 0.05) || 0.016;
   time = now;
+  if (phase === SPACE) space(dt); else web.step(dt);
+}
 
+function space(dt) {
   /* ---- it grows. slowly on its own, faster on what it has eaten */
   grow = Math.min(1, grow + dt / GROW_SECONDS + Math.min(consuming, 1.4) * dt * 0.0042);
   S = S_START * Math.pow(S_END / S_START, grow);
@@ -542,6 +579,10 @@ function frame(ms) {
     hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
   }
 
+  bangT = Math.max(0, bangT - dt);
+  bangFlash = Math.max(0, bangFlash - dt * 1.4);
+  var boost = bangT * 0.2;                 /* the debris runs bright and fat */
+
   var speed = Math.sqrt(hole.vx*hole.vx + hole.vy*hole.vy);
   captureFlash *= 0.94;
   consuming += (Math.min(captureFlash * 0.5, 1.4) - consuming) * 0.06;
@@ -554,17 +595,12 @@ function frame(ms) {
 
   /* ---- once the dark is wider than the page there is nothing else to eat */
   var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
-  if (!ending && R_SHADOW >= halfDiag * 0.72) { ending = true; audio.end(); }
+  if (!ending && R_SHADOW >= halfDiag * 0.72) { ending = true; audio.hush(); }
   if (ending) {
     endT += dt;
     var w = Math.min(1, endT / WHITEOUT);
     white = w * w * (3 - 2 * w);
-    if (endT >= WHITEOUT + 0.25) {
-      over = true;
-      document.body.className = 'over';
-      setTimeout(function () { document.body.className = 'over lit'; }, 80);
-      return;
-    }
+    if (endT >= WHITEOUT + 0.25) { web.enter(); return; }
   }
 
   for (var i = 0; i < COUNT; i++) {
@@ -601,8 +637,8 @@ function frame(ms) {
         if (ddx*ddx + ddy*ddy < CAPTURE*CAPTURE) { capture(i, x, y); continue; }
       }
 
-      lum = mag[i] * Math.min(1, iz * 0.55) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
-      size = (role[i] === SUN ? 2.4 : role[i] === PLANET ? 0.8 : 1.0) * (0.7 + iz * 0.5) * DPR;
+      lum = mag[i] * Math.min(1, iz * 0.72) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
+      size = (role[i] === SUN ? 2.6 : role[i] === PLANET ? 0.9 : 1.15) * (0.75 + iz * 0.5) * DPR;
     } else {
       var dx = wrap(hole.x - px[i]) * aspect, dy = wrap(hole.y - py[i]);
       var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
@@ -617,6 +653,11 @@ function frame(ms) {
 
       vx[i] *= 0.9995; vy[i] *= 0.9995;
       px[i] += vx[i]; py[i] += vy[i];
+      /* debris thrown clear of the page does not come round the other side:
+         it is a star again, and a long way off */
+      if (bangT > 0 && (px[i] < 0 || px[i] >= 1 || py[i] < 0 || py[i] >= 1)) {
+        rebirth(i, true); continue;      /* the same test the wrap below makes */
+      }
       px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
 
       if (r < R_SHADOW * 0.85) {
@@ -624,13 +665,13 @@ function frame(ms) {
         flare = Math.min(flare + (role[i] === SUN ? 0.10 : 0.012), 0.9);
         rebirth(i, true); continue;
       }
-      if (r > Math.max(0.62, R_SHADOW * 1.5)) { rebirth(i, true); continue; }
+      if (r > Math.max(0.62, R_SHADOW * 1.5) + bangT * 0.42) { rebirth(i, true); continue; }
 
       x = px[i]; y = py[i];
       var sp = Math.abs(vx[i]) + Math.abs(vy[i]);
       var near = Math.min(1, R_LENS * 1.4 / r);
-      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) + sp * 120);
-      size = (0.9 + near * 3.0) * DPR;
+      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) * (1 + boost * 0.6) + sp * 120);
+      size = (0.9 + near * 3.0) * DPR * (1 + boost * 1.2);
     }
 
     verts[o]   = x * 2 - 1;
@@ -689,13 +730,352 @@ function frame(ms) {
   gl.uniform1f(gl.getUniformLocation(progComp, 'uFlare'), flare);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uSpark'), spark);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uWhite'), white);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uBang'), bangFlash);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   cur = dst;
 }
 
+/* ---------------------------------------------------------------- the bang
+
+   everything the spider gathered, let go of at once, from wherever she was
+   standing. what flies far enough out stops being debris and is a star again,
+   and what is left in the middle is a speck of light with an appetite.      */
+
+function bang(nx, ny) {
+  hole.x = nx; hole.y = ny; hole.vx = 0; hole.vy = 0;
+  target.x = nx; target.y = ny; dragging = false;
+
+  grow = 0; S = S_START;
+  R_SHADOW = R_SHADOW0 * S; R_LENS = R_LENS0 * S;
+  GRAV = GRAV0 * S * S * S; CAPTURE = CAPTURE0 * S; CAPTURE_Z = 1.8;
+  ending = false; endT = 0; white = 0;
+  captureFlash = 0; consuming = 0; flare = 0.9;
+  bangT = 5; bangFlash = 1;
+  clearTargets();
+
+  var asp = W / H;
+  for (var i = 0; i < COUNT; i++) {
+    state[i] = CAUGHT;                 /* roles are left alone: the groups keep
+                                          their shape and come back whole */
+    var a = Math.random() * Math.PI * 2;
+    var sp = 0.0012 + Math.pow(Math.random(), 2.0) * 0.011;
+    /* on a small ball around it, never on it: anything sitting exactly on the
+       shadow is eaten on the first frame and comes back as a far-off star */
+    var r0 = 0.004 + Math.random() * 0.013;
+    px[i] = nx + Math.cos(a) * r0 / asp;
+    py[i] = ny + Math.sin(a) * r0;
+    px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
+    vx[i] = Math.cos(a) * sp / asp;
+    vy[i] = Math.sin(a) * sp;
+    mag[i] = 0.55 + Math.random() * 0.9;
+    seed[i] = Math.random() * 1000;
+  }
+  audio.wake();
+}
+
+/* --------------------------------------------------------------- the white
+
+   the far side of the whiteout. a spider the size of a full stop goes about
+   tying the specks of matter that float there; a tied speck darkens and stays
+   where it is put. drag a speck to her to feed her, or drag it out of her
+   way. eight knots and the web hauls itself in.                             */
+
+var web = (function () {
+  var cv = document.getElementById('w');
+  var g = cv.getContext('2d');
+
+  var WALK = 0, TIE = 1, HAUL = 2;
+  var NEEDED = 8, MOTES = 18;
+  var TWO = Math.PI * 2;
+
+  var motes = [], strands = [], tied = 0;
+  var spider = { x:0, y:0, a:0, step:0, state:WALK, hold:0, prey:-1 };
+  var grab = -1, ptr = { x:0, y:0, down:false };
+  var t = 0, blackT = -1, U = 1, taut = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function nearestFree(x, y, within) {
+    var best = -1, bd = within ? within * within : 1e12;
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i]; if (m.tied) continue;
+      var dx = m.x - x, dy = m.y - y, d = dx*dx + dy*dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function nearestTied(skip) {
+    var s = motes[skip], best = -1, bd = 1e12;
+    for (var i = 0; i < motes.length; i++) {
+      if (i === skip || !motes[i].tied) continue;
+      var dx = motes[i].x - s.x, dy = motes[i].y - s.y, d = dx*dx + dy*dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function enter() {
+    phase = WEB;
+    canvas.style.display = 'none';
+    cv.style.display = 'block';
+    layout();
+    motes.length = 0; strands.length = 0;
+    tied = 0; t = 0; blackT = -1; taut = 0; grab = -1; ptr.down = false;
+    var m = 70 * U;
+    for (var i = 0; i < MOTES; i++)
+      motes.push({ x:rand(m, W - m), y:rand(m, H - m), vx:rand(-8,8), vy:rand(-8,8),
+                   s:rand(0, 900), r:rand(1.9, 3.4), tied:false, dark:0 });
+    spider.x = rand(W * 0.3, W * 0.7);
+    spider.y = rand(H * 0.3, H * 0.7);
+    spider.a = rand(0, TWO); spider.step = 0;
+    spider.state = WALK; spider.hold = 0; spider.prey = -1;
+  }
+
+  function layout() {
+    U = DPR;
+    cv.width = W; cv.height = H;
+    var m = 14 * U;
+    for (var i = 0; i < motes.length; i++) {
+      motes[i].x = Math.max(m, Math.min(W - m, motes[i].x));
+      motes[i].y = Math.max(m, Math.min(H - m, motes[i].y));
+    }
+    spider.x = Math.max(m, Math.min(W - m, spider.x));
+    spider.y = Math.max(m, Math.min(H - m, spider.y));
+  }
+
+  /* ---- the specks. they drift on the same curl noise as the dust does */
+  function drift(dt) {
+    var mg = 16 * U;
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i];
+      if (m.tied) {
+        m.x += Math.sin(t * 0.7 + m.s) * 0.05 * U;
+        m.y += Math.cos(t * 0.61 + m.s) * 0.05 * U;
+        if (m.dark < 1) m.dark = Math.min(1, m.dark + dt * 1.5);
+        continue;
+      }
+      curl(m.x / (90 * U) + m.s, m.y / (90 * U) + t * 0.06, c2);
+      m.vx += c2[0] * 34 * dt; m.vy += c2[1] * 34 * dt;
+
+      if (grab === i) {
+        m.vx += (ptr.x - m.x) * 26 * dt;
+        m.vy += (ptr.y - m.y) * 26 * dt;
+        m.vx *= 0.86; m.vy *= 0.86;
+      } else {
+        if (ptr.down) {                      /* the rest scatter out of the way */
+          var dx = m.x - ptr.x, dy = m.y - ptr.y, d2 = dx*dx + dy*dy;
+          var R = 58 * U;
+          if (d2 < R * R) {
+            var d = Math.sqrt(d2) + 0.001;
+            var f = (1 - d / R) * 300 * dt;
+            m.vx += dx / d * f; m.vy += dy / d * f;
+          }
+        }
+        m.vx *= 0.985; m.vy *= 0.985;
+      }
+
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      if (m.x < mg) { m.x = mg; m.vx = Math.abs(m.vx) * 0.5; }
+      if (m.x > W - mg) { m.x = W - mg; m.vx = -Math.abs(m.vx) * 0.5; }
+      if (m.y < mg) { m.y = mg; m.vy = Math.abs(m.vy) * 0.5; }
+      if (m.y > H - mg) { m.y = H - mg; m.vy = -Math.abs(m.vy) * 0.5; }
+    }
+  }
+
+  /* ---- she goes for whichever speck is nearest, and never in a straight line */
+  function hunt(dt) {
+    if (spider.state === TIE) {
+      spider.hold -= dt;
+      spider.step += dt * 5;
+      if (spider.hold <= 0) {
+        var p = spider.prey;
+        spider.prey = -1; spider.state = WALK;   /* before the knot: the eighth
+                                                    one puts her into the haul */
+        knot(p);
+      }
+      return;
+    }
+    if (spider.prey < 0 || motes[spider.prey].tied)
+      spider.prey = nearestFree(spider.x, spider.y);
+    if (spider.prey < 0) return;
+
+    var m = motes[spider.prey];
+    var dx = m.x - spider.x, dy = m.y - spider.y;
+    var d = Math.sqrt(dx*dx + dy*dy) || 1;
+    if (d < 15 * U) { spider.state = TIE; spider.hold = 0.45; return; }
+
+    /* she does not walk straight at it, but the wander goes out of her the
+       nearer she gets, and she slows and turns tighter for the last of it —
+       at full stride she cannot turn inside her own reach */
+    var close = Math.min(1, d / (110 * U));
+    var want = Math.atan2(dy, dx) + Math.sin(t * 1.6 + spider.s) * 0.30 * close;
+    var da = Math.atan2(Math.sin(want - spider.a), Math.cos(want - spider.a));
+    spider.a += da * Math.min(1, dt * 9);
+    var sp = 105 * U * (0.28 + 0.72 * close);
+    spider.x += Math.cos(spider.a) * sp * dt;
+    spider.y += Math.sin(spider.a) * sp * dt;
+    spider.step += dt * (5 + 9 * close);
+  }
+
+  function knot(i) {
+    var m = motes[i];
+    m.tied = true; m.vx = m.vy = 0;
+    strands.push({ a:i, b:-1, s:rand(0, 900) });      /* b < 0: tied to her */
+    var j = nearestTied(i);
+    if (j >= 0) strands.push({ a:i, b:j, s:rand(0, 900) });
+    tied++;
+    audio.tick(tied / NEEDED);
+    if (tied >= NEEDED) { spider.state = HAUL; spider.prey = -1; }
+  }
+
+  /* ---- eight of them, and the web reels itself in. it starts as a lean and
+         ends as a magnet: whatever is tied on falls faster the closer it gets */
+  function haul(dt) {
+    var home = 0;
+    taut = Math.min(1, taut + dt * 0.8);
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i]; if (!m.tied) continue;
+      if (m.home) {
+        m.x = spider.x + Math.sin(t * 30 + m.s) * 0.7 * U;
+        m.y = spider.y + Math.cos(t * 27 + m.s) * 0.7 * U;
+        home++; continue;
+      }
+      var dx = spider.x - m.x, dy = spider.y - m.y;
+      var d = Math.sqrt(dx*dx + dy*dy) || 1;
+      var acc = (110 + 26000 / (d / U + 40)) * U;
+      m.vx += dx / d * acc * dt; m.vy += dy / d * acc * dt;
+      m.vx *= 0.99; m.vy *= 0.99;
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      /* measured after the step, or a fast one steps clean over the middle */
+      var ex = spider.x - m.x, ey = spider.y - m.y;
+      if (ex*ex + ey*ey < 100 * U * U) { m.home = true; m.x = spider.x; m.y = spider.y; home++; }
+    }
+    spider.step += dt * 4;
+    if (home >= NEEDED && blackT < 0) blackT = 0;
+  }
+
+  /* ---- and the white is taken back the way the black was */
+  function closing(dt) {
+    blackT += dt;
+    var hold = 0.34;
+    if (blackT < hold) {                    /* everything she has, in one place */
+      var q = blackT / hold;
+      g.fillStyle = '#000';
+      g.beginPath(); g.arc(spider.x, spider.y, (4 + 30 * q * q) * U, 0, TWO); g.fill();
+      return;
+    }
+    var k = Math.min(1, (blackT - hold) / 0.62);
+    var r = k * k * Math.sqrt(W*W + H*H) * 1.15;
+    var gr = g.createRadialGradient(spider.x, spider.y, Math.max(0.01, r * 0.7),
+                                    spider.x, spider.y, r);
+    gr.addColorStop(0, 'rgba(0,0,0,1)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(spider.x, spider.y, r, 0, TWO); g.fill();
+    if (k >= 1) {
+      phase = SPACE;
+      cv.style.display = 'none';
+      canvas.style.display = 'block';
+      bang(spider.x / W, 1 - spider.y / H);
+    }
+  }
+
+  function drawWeb() {
+    g.lineCap = 'round';
+    for (var i = 0; i < strands.length; i++) {
+      var st = strands[i], a = motes[st.a], bx, by;
+      if (st.b < 0) { bx = spider.x; by = spider.y; }
+      else { bx = motes[st.b].x; by = motes[st.b].y; }
+      var dx = bx - a.x, dy = by - a.y;
+      var len = Math.sqrt(dx*dx + dy*dy) || 1;
+      /* the thread floats: its slack swings slowly across the middle of it */
+      var sag = len * (0.055 + 0.085 * Math.sin(t * 0.55 + st.s)) * (1 - taut * 0.92);
+      var mx = (a.x + bx) * 0.5 - dy / len * sag;
+      var my = (a.y + by) * 0.5 + dx / len * sag;
+      g.strokeStyle = 'rgba(0,0,0,' + (0.11 + 0.17 * a.dark).toFixed(3) + ')';
+      g.lineWidth = 0.9 * U;
+      g.beginPath(); g.moveTo(a.x, a.y);
+      g.quadraticCurveTo(mx, my, bx, by); g.stroke();
+    }
+  }
+
+  function drawMotes() {
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i];
+      g.fillStyle = 'rgba(0,0,0,' + (0.15 + 0.74 * m.dark).toFixed(3) + ')';
+      g.beginPath();
+      g.arc(m.x, m.y, m.r * U * (1 - 0.18 * m.dark), 0, TWO);
+      g.fill();
+      if (m.dark > 0.05) {                    /* a knot has a little halo to it */
+        g.strokeStyle = 'rgba(0,0,0,' + (0.16 * m.dark).toFixed(3) + ')';
+        g.lineWidth = 0.8 * U;
+        g.beginPath(); g.arc(m.x, m.y, (m.r + 2.6) * U, 0, TWO); g.stroke();
+      }
+    }
+  }
+
+  var LEG = [0.55, 1.20, 1.95, 2.65];
+
+  function drawSpider() {
+    var cx = spider.x, cy = spider.y, a = spider.a;
+    var ca = Math.cos(a), sa = Math.sin(a);
+    g.strokeStyle = 'rgba(0,0,0,0.88)';
+    g.lineWidth = 0.9 * U;
+    for (var s = -1; s <= 1; s += 2) {
+      for (var k = 0; k < 4; k++) {
+        var ph = spider.step + k * 0.8 + (s > 0 ? 1.6 : 0);
+        var base = a + s * (LEG[k] + Math.sin(ph) * 0.17);
+        var kx = cx + Math.cos(base) * 4.6 * U;
+        var ky = cy + Math.sin(base) * 4.6 * U;
+        var knee = base + s * (0.72 + Math.cos(ph) * 0.24);
+        g.beginPath(); g.moveTo(cx, cy); g.lineTo(kx, ky);
+        g.lineTo(kx + Math.cos(knee) * 5.4 * U, ky + Math.sin(knee) * 5.4 * U);
+        g.stroke();
+      }
+    }
+    g.fillStyle = '#000';
+    g.beginPath();
+    g.ellipse(cx - ca * 2.7 * U, cy - sa * 2.7 * U, 3.4 * U, 2.9 * U, a, 0, TWO);
+    g.fill();
+    g.beginPath();
+    g.ellipse(cx + ca * 1.7 * U, cy + sa * 1.7 * U, 2.0 * U, 1.7 * U, a, 0, TWO);
+    g.fill();
+  }
+
+  function step(dt) {
+    t += dt;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, W, H);
+    drift(dt);
+    if (spider.state === HAUL) haul(dt); else hunt(dt);
+    drawWeb(); drawMotes(); drawSpider();
+    if (blackT >= 0) closing(dt);
+  }
+
+  function at(e) {
+    var p = e.touches ? e.touches[0] : e;
+    ptr.x = p.clientX * DPR; ptr.y = p.clientY * DPR;
+  }
+  cv.addEventListener('pointerdown', function (e) {
+    audio.start(); at(e); ptr.down = true;
+    if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
+    grab = nearestFree(ptr.x, ptr.y, 110 * U);
+  });
+  cv.addEventListener('pointermove', function (e) { if (ptr.down) at(e); });
+  function drop() { ptr.down = false; grab = -1; }
+  cv.addEventListener('pointerup', drop);
+  cv.addEventListener('pointercancel', drop);
+
+  spider.s = Math.random() * 900;
+
+  return { enter: enter, step: step, resize: layout };
+})();
+
 resize();
-requestAnimationFrame(frame);
+requestAnimationFrame(tick);
 
 })();
 </script>
