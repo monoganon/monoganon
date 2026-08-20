@@ -83,8 +83,10 @@ var FRAG_FEED =
   '  float rs=length(ps);' +
   '  float edge=smoothstep(0.13,0.52,rs);' +
   '  vec2 uvStar=c+(ps*(1.0+0.0045*edge))/asp;' +
-  /* --- the vortex, close in only */
-  '  vec2 ph=vUv-uHole;ph=fract(ph+0.5)-0.5;ph*=asp;' +
+  /* --- the vortex, close in only. no wrapping: measured across the seam, a
+         pixel on one edge is "near" a hole on the other, and the far side of
+         the frame gets dragged in over the top of it */
+  '  vec2 ph=(vUv-uHole)*asp;' +
   '  float rh=length(ph)+1e-5;' +
   /* the swirl keeps to the well, so it widens as the well does */
   '  float a=uSwirl*0.028/(rh/(uLens*0.40)+1.0);' +
@@ -123,8 +125,7 @@ var FRAG_COMP =
   'float samp(vec2 uv){return texture2D(uSrc,clamp(uv,0.0005,0.9995)).g;}' +
   'void main(){' +
   '  vec2 asp=vec2(uAspect,1.0);' +
-  /* wrapped, so the lens works across the screen edges too */
-  '  vec2 p=vUv-uHole;p=fract(p+0.5)-0.5;p*=asp;' +
+  '  vec2 p=(vUv-uHole)*asp;' +
   '  float r=length(p)+1e-6;' +
   '  vec2 dir=p/r;' +
   '  float defl=uLens*uLens*1.9/(r*r+uLens*uLens*0.35);' +
@@ -442,6 +443,10 @@ var audio = (function () {
      first knot is the top of the ladder and each one after it fills in lower. */
   var TINN = 2317;
   var PELOG = [-2288, -2749, -3113, -3492, -3866, -4271, -4590, -4986];
+  /* the eighth note lands off true like the rest of them, and then, over the
+     length of the haul, slides down onto the root the whole chord is leaning
+     against: the same pitch as the fourth step, two octaves under it */
+  var ROOTNOTE = -5888;
 
   var tinnOsc = null, tinnGain = null, chord = [];
 
@@ -527,7 +532,7 @@ var audio = (function () {
     tinnOsc.frequency.value = TINN;
     tinnGain = ctx.createGain();
     tinnGain.gain.setValueAtTime(0.0001, at);
-    tinnGain.gain.exponentialRampToValueAtTime(0.030, at + 1.8);
+    tinnGain.gain.exponentialRampToValueAtTime(0.030, at + 2.6);
     var lf = ctx.createOscillator(); lf.type = 'sine'; lf.frequency.value = 1 / 11;
     var lg = ctx.createGain(); lg.gain.value = 3.5;
     lf.connect(lg); lg.connect(tinnOsc.frequency); lf.start(at);
@@ -550,17 +555,26 @@ var audio = (function () {
     master.gain.cancelScheduledValues(t);
     master.gain.setTargetAtTime(0.0001, t + 0.22, 0.14);
 
+    /* the white is gone in under a second but the sound of it is not: the
+       noise is walked up out of the bottom of the range over four seconds and
+       comes to rest on the whistle, which is all that is left of it */
     var src = ctx.createBufferSource();
     src.buffer = noiseBuffer(ctx); src.loop = true;
-    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 1.7;
-    hp.frequency.setValueAtTime(38, t);
-    hp.frequency.exponentialRampToValueAtTime(11000, t + 0.50);
+    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 2.4;
+    hp.frequency.setValueAtTime(34, t);
+    hp.frequency.exponentialRampToValueAtTime(240, t + 0.9);
+    hp.frequency.exponentialRampToValueAtTime(TINN * 0.92, t + 4.0);
+    var bpk = ctx.createBiquadFilter(); bpk.type = 'peaking';
+    bpk.frequency.value = TINN; bpk.Q.value = 3.5;
+    bpk.gain.setValueAtTime(0, t);
+    bpk.gain.linearRampToValueAtTime(14, t + 4.0);   /* the whistle picked out */
     var ng = ctx.createGain();
     ng.gain.setValueAtTime(0.0001, t);
     ng.gain.exponentialRampToValueAtTime(0.95, t + 0.025);
-    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.70);
-    src.connect(hp); hp.connect(ng); ng.connect(ctx.destination);
-    src.start(t); src.stop(t + 0.9);
+    ng.gain.setTargetAtTime(0.30, t + 0.5, 1.1);
+    ng.gain.setTargetAtTime(0.0001, t + 4.2, 0.9);
+    src.connect(hp); hp.connect(bpk); bpk.connect(ng); ng.connect(ctx.destination);
+    src.start(t); src.stop(t + 8);
 
     var thud = ctx.createOscillator(); thud.type = 'sine';
     thud.frequency.setValueAtTime(124, t);
@@ -572,7 +586,7 @@ var audio = (function () {
     thud.connect(tg); tg.connect(ctx.destination);
     thud.start(t); thud.stop(t + 0.9);
 
-    tinnitus(t + 0.40);
+    tinnitus(t + 2.6);          /* it comes up under the tail of the sweep */
   }
 
   /* the annihilation. a charge going off, and then a long fall: the noise is
@@ -639,6 +653,7 @@ var audio = (function () {
     if (!ctx) return;
     var t = ctx.currentTime;
     tinnitus(t);
+    var last = (n >= PELOG.length);
     var f = TINN * Math.pow(2, PELOG[Math.min(n, PELOG.length) - 1] / 1200);
     var o  = ctx.createOscillator(); o.type  = 'triangle'; o.frequency.value = f;
     var o2 = ctx.createOscillator(); o2.type = 'sine';
@@ -647,7 +662,18 @@ var audio = (function () {
     lpk.frequency.value = f * 4.5; lpk.Q.value = 0.7;
     var g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.075, t + 0.55);   /* sustained, not struck */
+    g.gain.exponentialRampToValueAtTime(last ? 0.115 : 0.075, t + 0.55);
+    if (last) {
+      /* it arrives wonky with the rest of them and then settles, slowly, onto
+         the note the chord has been asking for the whole way down */
+      var fr = TINN * Math.pow(2, ROOTNOTE / 1200);
+      o.frequency.setValueAtTime(f, t + 0.9);
+      o.frequency.exponentialRampToValueAtTime(fr, t + 5.0);
+      o2.frequency.setValueAtTime(f * Math.pow(2, 1.1 / 1200), t + 0.9);
+      o2.frequency.exponentialRampToValueAtTime(fr * Math.pow(2, 1.1 / 1200), t + 5.0);
+      lpk.frequency.setValueAtTime(f * 4.5, t + 0.9);
+      lpk.frequency.exponentialRampToValueAtTime(fr * 7.0, t + 5.0);
+    }
     o.connect(lpk); o2.connect(lpk); lpk.connect(g); g.connect(ctx.destination);
     o.start(t); o2.start(t);
     chord.push({ o: o, o2: o2, g: g });
@@ -681,6 +707,13 @@ function space(dt) {
   CAPTURE_Z = 1.8 + grow * 1.35;
   var spark = Math.pow(Math.max(0, 1 - grow / 0.25), 1.5);
 
+  var aspect = W / H;
+  var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
+  /* past a certain size it is penned in. let it off the edge and it comes back
+     in the other side, and for those few frames the lens is reaching across a
+     seam that does not exist */
+  var penned = R_LENS > halfDiag * 0.26;
+
   if (dragging) {
     hole.vx = hole.vx * 0.965 + wrap(target.x - hole.x) * 0.0016;
     hole.vy = hole.vy * 0.965 + wrap(target.y - hole.y) * 0.0016;
@@ -688,8 +721,18 @@ function space(dt) {
     hole.vx *= 0.994; hole.vy *= 0.994;
   }
   hole.x += hole.vx; hole.y += hole.vy;
-  /* thrown off one side, it comes back in the other */
-  if (hole.x < 0 || hole.x >= 1 || hole.y < 0 || hole.y >= 1) {
+  if (penned) {
+    /* it can still be shoved about, but not off the page. the bigger it is the
+       further in the wall stands, so the shadow never sits half over an edge */
+    var mgx = Math.min(0.45, 0.03 + R_SHADOW * 1.5 / aspect);
+    var mgy = Math.min(0.45, 0.03 + R_SHADOW * 1.5);
+    if (hole.x < mgx)     { hole.x = mgx;     hole.vx *= -0.25; }
+    if (hole.x > 1 - mgx) { hole.x = 1 - mgx; hole.vx *= -0.25; }
+    if (hole.y < mgy)     { hole.y = mgy;     hole.vy *= -0.25; }
+    if (hole.y > 1 - mgy) { hole.y = 1 - mgy; hole.vy *= -0.25; }
+  } else if (hole.x < 0 || hole.x >= 1 || hole.y < 0 || hole.y >= 1) {
+    /* while it is small it is thrown off one side and comes back in the other,
+       and crossing knocks the drone onto the next step of the ladder */
     stepAt = (stepAt + 1) % STEPS.length;
     jump = Math.pow(2, STEPS[stepAt] / 12);
     hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
@@ -707,12 +750,9 @@ function space(dt) {
   if (flare > 0.9) flare = 0.9;
   audio.update(hole.x, hole.y, consuming, dragging, jump, grow);
 
-  var aspect = W / H;
-
   /* ---- the end comes when the well is wider than the page: any further and
      the lens is bending in pixels from the far side of the screen */
-  var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
-  if (!ending && R_LENS * 1.2 >= halfDiag) { ending = true; audio.blast(); }
+  if (!ending && R_LENS * 1.35 >= halfDiag) { ending = true; audio.blast(); }
   if (ending) {
     endT += dt;
     var w = Math.min(1, endT / WHITEOUT);
@@ -1091,6 +1131,9 @@ var web = (function () {
     var sp = 40 * U * (0.30 + 0.70 * close);
     spider.x += Math.cos(spider.a) * sp * dt;
     spider.y += Math.sin(spider.a) * sp * dt;
+    var mg = 14 * U;                    /* she does not walk off the page */
+    spider.x = Math.max(mg, Math.min(W - mg, spider.x));
+    spider.y = Math.max(mg, Math.min(H - mg, spider.y));
     spider.step += dt * (1.8 + 3.4 * close);
   }
 
