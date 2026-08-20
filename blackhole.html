@@ -8,10 +8,24 @@
 <style>
   html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
   canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; }
+  /* what is left of the page once it has been eaten */
+  #end { position:fixed; left:0; top:0; right:0; bottom:0; background:#fff;
+         display:flex; align-items:center; justify-content:center; visibility:hidden; }
+  #end a { font-family:"Courier New",courier,monospace; font-size:13px;
+           letter-spacing:0.42em; text-transform:uppercase; color:#000;
+           text-decoration:none; border-bottom:1px solid #000; padding-bottom:3px;
+           opacity:0; transition:opacity 3.5s ease-in; }
+  body.over #end { visibility:visible; }
+  body.over canvas { display:none; }
+  body.lit #end a { opacity:1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+
+<!-- THE FAR SIDE. the one thing on the other side of the hole:
+     change the href and the words to wherever this should lead. -->
+<div id="end"><a href="index.html">monoganon</a></div>
 
 <script>
 (function () {
@@ -25,12 +39,29 @@ if (!gl) return;
 var DPR = Math.min(window.devicePixelRatio || 1, 1.5);
 var W = 1, H = 1;
 
-/* the shadow is small; the gravity well it sits in is not */
-var R_SHADOW  = 0.009;
-var R_LENS    = 0.0275;
-var GRAV      = 0.00000025;
-var CAPTURE   = 0.045;
-var CAPTURE_Z = 1.8;
+/* the shadow is small; the gravity well it sits in is not.
+   these are the sizes at full size, S = 1; everything below is scaled by S,
+   which starts at a pinprick and ends larger than the page. */
+var R_SHADOW0 = 0.009;
+var R_LENS0   = 0.0275;
+var GRAV0     = 0.00000025;
+var CAPTURE0  = 0.045;
+
+/* it opens as a speck of light and takes about three minutes to eat the page.
+   feeding it stars hurries that along; left alone it still gets there. */
+var GROW_SECONDS = 150;
+var S_START = 0.14, S_END = 120;
+var grow = 0, S = S_START;
+
+var R_SHADOW = R_SHADOW0 * S;
+var R_LENS   = R_LENS0   * S;
+var GRAV     = GRAV0     * S * S * S;   /* keeps the orbits turning at one rate */
+var CAPTURE  = CAPTURE0  * S;
+var CAPTURE_Z = 1.8;                    /* how far back into the deep it reaches */
+
+/* the end: white, and one way out */
+var ending = false, endT = 0, white = 0, over = false;
+var WHITEOUT = 2.8;
 
 /* ---------------------------------------------------------------- shaders */
 
@@ -62,12 +93,13 @@ var FRAG_FEED =
   /* --- the vortex, close in only */
   '  vec2 ph=vUv-uHole;ph=fract(ph+0.5)-0.5;ph*=asp;' +
   '  float rh=length(ph)+1e-5;' +
-  '  float a=uSwirl*0.028/(rh*90.0+1.0);' +
+  /* the swirl keeps to the well, so it widens as the well does */
+  '  float a=uSwirl*0.028/(rh/(uLens*0.40)+1.0);' +
   '  float s=sin(a),co=cos(a);' +
   '  ph=mat2(co,-s,s,co)*ph;' +
   /* same rule close in, but here the residue is pulled toward the hole, so a
      star being fed on trails a thread of itself into the dark */
-  '  ph*=1.0+0.030/(rh*230.0+1.0);' +
+  '  ph*=1.0+0.030/(rh/(uLens*0.158)+1.0);' +
   '  vec2 uvHole=uHole+ph/asp;' +
   '  float hw=exp(-rh*rh/(uLens*uLens*7.0));' +
   '  vec2 uv=mix(uvStar,uvHole,hw);' +
@@ -93,7 +125,7 @@ var FRAG_PART =
 var FRAG_COMP =
   'precision highp float;varying vec2 vUv;' +
   'uniform sampler2D uSrc;uniform vec2 uHole;' +
-  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare;' +
+  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare,uSpark,uWhite;' +
   'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
   'float samp(vec2 uv){return texture2D(uSrc,clamp(uv,0.0005,0.9995)).g;}' +
   'void main(){' +
@@ -121,9 +153,18 @@ var FRAG_COMP =
   '  float fx=p.x/(uShadow*6.0);' +
   '  l+=exp(-fy*fy-fx*fx)*uFlare*1.15;' +
   '  l*=smoothstep(uShadow*0.88,uShadow*1.10,r);' +
+  /* while it is still barely there it reads as a plain speck of light */
+  '  float sp=r/0.0048;' +
+  '  l+=exp(-sp*sp)*uSpark*1.5;' +
   '  l+=(hash(vUv*vec2(1024.0,768.0)+uTime)-0.5)*0.02;' +
   '  l*=1.0-0.5*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
-  '  gl_FragColor=vec4(vec3(l),1.0);' +
+  /* the end. the dark turns over and comes out the other way: a white front
+     opens at the hole and runs out past the corners of the page */
+  '  float mx=length(asp)*0.5;' +
+  '  float rf=uWhite*mx*1.42;' +
+  '  float wm=1.0-smoothstep(rf-mx*0.30,rf,r);' +
+  '  l+=(1.0-wm)*uWhite*uWhite*0.55;' +
+  '  gl_FragColor=vec4(vec3(mix(l,1.0,wm)),1.0);' +
   '}';
 
 function compile(type, src) {
@@ -318,10 +359,10 @@ function capture(i, x, y) {
   px[i] = x; py[i] = y;
   var dx = wrap(x - hole.x) * (W / H), dy = wrap(y - hole.y);
   var r = Math.sqrt(dx*dx + dy*dy) || 1e-4;
-  var orbit = Math.sqrt(GRAV / (r + 0.01)) * (0.92 + Math.random() * 0.16);
-  vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002;
-  vy[i] =  dx / r * orbit + (Math.random()-0.5) * 0.0002;
-  captureFlash += role[i] === SUN ? 1.8 : 0.35;
+  var orbit = Math.sqrt(GRAV / (r + 0.01 * S)) * (0.92 + Math.random() * 0.16);
+  vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002 * S;
+  vy[i] =  dx / r * orbit + (Math.random()-0.5) * 0.0002 * S;
+  captureFlash = Math.min(captureFlash + (role[i] === SUN ? 1.8 : 0.35), 40);
 }
 
 (function seedSky() {
@@ -366,7 +407,7 @@ canvas.addEventListener('pointercancel', release);
 /* ------------------------------------------------------------------ audio */
 
 var audio = (function () {
-  var ctx = null, started = false;
+  var ctx = null, started = false, done = false;
   var droneA, droneB, sub, hum, lp, bp, noiseGain, pan, master, droneGain;
 
   var ROOT = 29.135;          /* B flat */
@@ -380,7 +421,7 @@ var audio = (function () {
   }
 
   function start() {
-    if (started) return;
+    if (started || done) return;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     started = true;
@@ -430,8 +471,8 @@ var audio = (function () {
     master.gain.linearRampToValueAtTime(0.9, ctx.currentTime + 8);
   }
 
-  function update(hx, hy, eat, bending, jump) {
-    if (!started || !ctx) return;
+  function update(hx, hy, eat, bending, jump, grown) {
+    if (!started || !ctx || done) return;
     var t = ctx.currentTime;
     /* the bend follows the hand while dragging, and drifts back slowly after */
     var f = ROOT * jump * Math.pow(2, (hy - 0.5) * MICROTONE);
@@ -443,10 +484,25 @@ var audio = (function () {
     lp.frequency.setTargetAtTime(85 + hx * 300, t, 4);
     bp.frequency.setTargetAtTime(500 + hx * 2600, t, 3);
     if (pan) pan.pan.setTargetAtTime((hx - 0.5) * 1.4, t, 3);
-    noiseGain.gain.setTargetAtTime(0.05 + Math.min(eat, 1) * 0.30, t, 0.35);
+    /* the crackle never leaves; it thickens as it feeds and as the thing grows */
+    noiseGain.gain.setTargetAtTime(0.05 + grown * 0.11 + Math.min(eat, 1) * 0.30, t, 0.35);
   }
 
-  return { start: start, update: update };
+  /* the last of it: the noise swells over the drone, then nothing at all */
+  function end() {
+    if (!started || !ctx || done) return;
+    done = true;
+    var t = ctx.currentTime;
+    noiseGain.gain.cancelScheduledValues(t);
+    noiseGain.gain.setTargetAtTime(0.75, t, 0.7);
+    noiseGain.gain.setTargetAtTime(0.0001, t + 1.9, 0.5);
+    master.gain.cancelScheduledValues(t);
+    master.gain.setTargetAtTime(1.0, t, 0.8);
+    master.gain.setTargetAtTime(0.0001, t + 2.0, 0.55);
+    setTimeout(function () { try { ctx.close(); } catch (e) {} }, 7000);
+  }
+
+  return { start: start, update: update, end: end };
 })();
 
 document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.start(); });
@@ -456,10 +512,21 @@ document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.sta
 var c2 = [0, 0], time = 0;
 
 function frame(ms) {
+  if (over) return;                    /* nothing left to draw */
   requestAnimationFrame(frame);
   var now = ms * 0.001;
   var dt = Math.min(now - time, 0.05) || 0.016;
   time = now;
+
+  /* ---- it grows. slowly on its own, faster on what it has eaten */
+  grow = Math.min(1, grow + dt / GROW_SECONDS + Math.min(consuming, 1.4) * dt * 0.0042);
+  S = S_START * Math.pow(S_END / S_START, grow);
+  R_SHADOW = R_SHADOW0 * S;
+  R_LENS   = R_LENS0   * S;
+  GRAV     = GRAV0 * S * S * S;
+  CAPTURE  = CAPTURE0 * S;
+  CAPTURE_Z = 1.8 + grow * 1.35;
+  var spark = Math.pow(Math.max(0, 1 - grow / 0.25), 1.5);
 
   if (dragging) {
     hole.vx = hole.vx * 0.965 + wrap(target.x - hole.x) * 0.0016;
@@ -481,9 +548,24 @@ function frame(ms) {
   /* mostly dark; it brightens when prodded, when moving, and when feeding */
   flare = flare * 0.93 + consuming * 0.020 + Math.min(speed * 55, 0.5) * 0.030;
   if (flare > 0.9) flare = 0.9;
-  audio.update(hole.x, hole.y, consuming, dragging, jump);
+  audio.update(hole.x, hole.y, consuming, dragging, jump, grow);
 
   var aspect = W / H;
+
+  /* ---- once the dark is wider than the page there is nothing else to eat */
+  var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
+  if (!ending && R_SHADOW >= halfDiag * 0.72) { ending = true; audio.end(); }
+  if (ending) {
+    endT += dt;
+    var w = Math.min(1, endT / WHITEOUT);
+    white = w * w * (3 - 2 * w);
+    if (endT >= WHITEOUT + 0.25) {
+      over = true;
+      document.body.className = 'over';
+      setTimeout(function () { document.body.className = 'over lit'; }, 80);
+      return;
+    }
+  }
 
   for (var i = 0; i < COUNT; i++) {
     var o = i * 4, x, y, lum, size, r = 1;
@@ -526,11 +608,11 @@ function frame(ms) {
       var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
       var ux = dx / r, uy = dy / r;
 
-      var g = GRAV / (r2 + 0.0009);
+      var g = GRAV / (r2 + 0.0009 * S * S);
       vx[i] += ux / aspect * g; vy[i] += uy * g;
 
       curl(px[i]*3.4 + seed[i]*0.01, py[i]*3.4 + time*0.05, c2);
-      var turb = 0.0000060 * Math.min(1, r * 4.0);
+      var turb = 0.0000060 * S * Math.min(1, r / (0.25 * S));
       vx[i] += c2[0] * turb; vy[i] += c2[1] * turb;
 
       vx[i] *= 0.9995; vy[i] *= 0.9995;
@@ -538,11 +620,11 @@ function frame(ms) {
       px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
 
       if (r < R_SHADOW * 0.85) {
-        captureFlash += role[i] === SUN ? 2.2 : 0.5;
-        flare += role[i] === SUN ? 0.10 : 0.012;
+        captureFlash = Math.min(captureFlash + (role[i] === SUN ? 2.2 : 0.5), 40);
+        flare = Math.min(flare + (role[i] === SUN ? 0.10 : 0.012), 0.9);
         rebirth(i, true); continue;
       }
-      if (r > 0.62) { rebirth(i, true); continue; }
+      if (r > Math.max(0.62, R_SHADOW * 1.5)) { rebirth(i, true); continue; }
 
       x = px[i]; y = py[i];
       var sp = Math.abs(vx[i]) + Math.abs(vy[i]);
@@ -605,6 +687,8 @@ function frame(ms) {
   gl.uniform1f(gl.getUniformLocation(progComp, 'uTime'), time);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uSpin'), spin);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uFlare'), flare);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uSpark'), spark);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uWhite'), white);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   cur = dst;
