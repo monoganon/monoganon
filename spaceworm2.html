@@ -25,9 +25,24 @@ body {
             position: relative;
             width: 90vw;
             height: 90vh;
-            border: 1px solid rgb(200, 200, 200);
+            border: 1px solid rgb(90, 110, 130);
+            border-radius: 6px;
             background-image: url('Images/background.gif');
             background-repeat: repeat;
+            overflow: hidden;
+            box-shadow: 0 0 24px rgba(80, 200, 255, 0.18),
+                        inset 0 0 90px rgba(0, 0, 0, 0.55);
+        }
+
+        /* soft vignette so the worm reads against the tiled background */
+        #game-container::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center,
+                        rgba(0,0,0,0) 45%, rgba(0,0,0,0.45) 100%);
+            z-index: 50;
         }
 
         #numpad {
@@ -61,6 +76,41 @@ body {
       position: absolute;
       width: 50px; 
       height: 50px;
+    }
+
+    #comet {
+      z-index: 20;
+      filter: drop-shadow(0 0 8px rgba(255, 210, 120, 0.85));
+      animation: comet-pulse 1.6s ease-in-out infinite;
+      will-change: transform;
+    }
+
+    @keyframes comet-pulse {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.12); }
+    }
+
+    /* worm segments: positioned at 0,0 and moved with transforms */
+    .worm-segment {
+      position: absolute;
+      top: 0;
+      left: 0;
+      border-radius: 30%;
+      z-index: 10;
+      will-change: transform;
+      background: radial-gradient(circle at 32% 28%,
+                  #9ef7ff 0%, #35c6e8 45%, #1a72b8 100%);
+      box-shadow: 0 0 6px rgba(90, 220, 255, 0.45),
+                  inset 0 0 6px rgba(255, 255, 255, 0.18);
+    }
+
+    .worm-segment.head {
+      border-radius: 42%;
+      z-index: 30;
+      background: radial-gradient(circle at 34% 26%,
+                  #ffffff 0%, #b8fbff 35%, #3fd8ff 70%, #1b8fd6 100%);
+      box-shadow: 0 0 14px rgba(120, 235, 255, 0.9),
+                  inset 0 0 8px rgba(255, 255, 255, 0.35);
     }
 
     #game-over-container {
@@ -175,7 +225,7 @@ let gameOverState = false; // Add this variable to keep track of the game state
     const gameContainer = document.getElementById('game-container');
     const comet = document.getElementById('comet');
 
-    const speed = 150;
+    const stepDuration = isMobile ? 140 : 120; // ms per grid step
     const snake = [
   {x: 3 * tileSize, y: 0},
   {x: 2 * tileSize, y: 0},
@@ -188,15 +238,50 @@ let gameOverState = false; // Add this variable to keep track of the game state
     gameContainer.style.width = containerSize + 'px';
     gameContainer.style.height = containerSize + 'px';
 
-    const createSnakePart = (x, y) => {
+    // Rendered segments are pooled and reused rather than rebuilt every step,
+    // which is what made the old loop stutter.
+    const segmentPool = [];
+
+    const createSnakePart = () => {
   const snakePart = document.createElement('div');
+  snakePart.className = 'worm-segment';
   snakePart.style.width = tileSize + 'px';
   snakePart.style.height = tileSize + 'px';
-  snakePart.style.left = x + 'px';
-  snakePart.style.top = y + 'px';
-  snakePart.style.backgroundColor = 'purple';
-  snakePart.classList.add('game-object');
+  gameContainer.appendChild(snakePart);
   return snakePart;
+};
+
+// Each segment is slightly smaller and dimmer than the one in front of it,
+// so the worm tapers off towards the tail.
+const styleSegment = (el, index, total) => {
+  const t = total > 1 ? index / (total - 1) : 0;
+  const scale = 1 - t * 0.2;
+  const isHead = index === 0;
+  el.classList.toggle('head', isHead);
+  el.style.opacity = (1 - t * 0.3).toFixed(3);
+  return isHead ? 1 : scale;
+};
+
+const renderSnake = () => {
+  while (segmentPool.length < snake.length) segmentPool.push(createSnakePart());
+  while (segmentPool.length > snake.length) segmentPool.pop().remove();
+
+  for (let i = 0; i < snake.length; i++) {
+    const el = segmentPool[i];
+    const part = snake[i];
+    const scale = styleSegment(el, i, snake.length);
+
+    // A wrap across an edge is a teleport, not a slide - kill the tween for it.
+    const jumped = el.dataset.x === undefined ||
+      Math.abs(part.x - Number(el.dataset.x)) > tileSize ||
+      Math.abs(part.y - Number(el.dataset.y)) > tileSize;
+
+    el.style.transition = jumped ? 'none' : 'transform ' + stepDuration + 'ms linear';
+    el.style.transform =
+      'translate3d(' + part.x + 'px,' + part.y + 'px,0) scale(' + scale + ')';
+    el.dataset.x = part.x;
+    el.dataset.y = part.y;
+  }
 };
 let isMouseDown = false;
 let mouseStartX;
@@ -358,7 +443,7 @@ const moveSnake = () => {
   for (let i = 1; i < snake.length; i++) {
     if (snake[i].x === headX && snake[i].y === headY) {
       gameOver();
-    //   return;
+      return;
     }
   }
 
@@ -375,17 +460,43 @@ const moveSnake = () => {
   snake[0].x = headX;
   snake[0].y = headY;
 
-  gameContainer.innerHTML = '';
-  gameContainer.appendChild(comet);
-  
-  for (let i = 0; i < snake.length; i++) {
-    const part = snake[i];
-    const isHead = i === 0;
-    const snakePart = createSnakePart(part.x, part.y, isHead);
-    gameContainer.appendChild(snakePart);
-  }
+  renderSnake();
 
   changingDirection = false;
+};
+
+// Fixed-timestep loop driven by requestAnimationFrame: steps land on a steady
+// cadence and rendering stays in sync with the display's refresh.
+let rafId = null;
+let stepAccumulator = 0;
+let lastFrameTime = 0;
+
+const gameLoop = (now) => {
+  rafId = requestAnimationFrame(gameLoop);
+
+  const delta = now - lastFrameTime;
+  lastFrameTime = now;
+
+  // Ignore huge gaps (tab was backgrounded) instead of fast-forwarding.
+  stepAccumulator += Math.min(delta, stepDuration * 3);
+
+  while (stepAccumulator >= stepDuration) {
+    stepAccumulator -= stepDuration;
+    moveSnake();
+    if (gameOverState) return;
+  }
+};
+
+const startLoop = () => {
+  stopLoop();
+  stepAccumulator = 0;
+  lastFrameTime = performance.now();
+  rafId = requestAnimationFrame(gameLoop);
+};
+
+const stopLoop = () => {
+  if (rafId !== null) cancelAnimationFrame(rafId);
+  rafId = null;
 };
 
 
@@ -447,7 +558,7 @@ const showGameOver = () => {
 
 const gameOver = () => {
     gameOverState = true;
-  clearInterval(gameInterval);
+  stopLoop();
   navigator.vibrate(200)
   
   const gameoverContainer = document.getElementById('game-over-container');
@@ -487,7 +598,7 @@ const restart = () => {
 
   lastRestart = currentTime;
 
-  clearInterval(gameInterval);
+  stopLoop();
 
   const gameoverContainer = document.getElementById('game-over-container');
   gameoverContainer.style.display = 'none'; // Hide the game-over message
@@ -503,10 +614,13 @@ const restart = () => {
 
   dx = tileSize;
   dy = 0;
+  queuedDirection = null;
+  changingDirection = false;
   updateCometPosition();
-  gameInterval = setInterval(moveSnake, speed);
+  renderSnake();
   startTime = new Date().getTime(); // Reset the start time
   gameOverState = false;
+  startLoop();
 };
 
 
@@ -602,11 +716,11 @@ numpadButtons.forEach(button => {
   gameContainer.style.height = containerSize + 'px';
 
   updateCometPosition();
-  gameInterval = setInterval(moveSnake, speed);
+  renderSnake();
   startTime = new Date().getTime();
+  startLoop();
 };
 
-    let gameInterval;
     initializeGame();
 
     // document.getElementById('save-score').addEventListener('click', saveScore);
