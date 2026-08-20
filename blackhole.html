@@ -7,11 +7,15 @@
   <title>Black Hole Vortex</title>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
-  canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; }
+  canvas { position:fixed; left:0; top:0; display:block; width:100vw; height:100vh;
+           touch-action:none; cursor:crosshair; }
+  /* the white side of it, where the spider is */
+  #w { background:#fff; display:none; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="w"></canvas>
 
 <script>
 (function () {
@@ -25,12 +29,32 @@ if (!gl) return;
 var DPR = Math.min(window.devicePixelRatio || 1, 1.5);
 var W = 1, H = 1;
 
-/* the shadow is small; the gravity well it sits in is not */
-var R_SHADOW  = 0.009;
-var R_LENS    = 0.0275;
-var GRAV      = 0.00000025;
-var CAPTURE   = 0.045;
-var CAPTURE_Z = 1.8;
+/* the shadow is small; the gravity well it sits in is not.
+   these are the sizes at full size, S = 1; everything below is scaled by S,
+   which starts at a pinprick and ends larger than the page. */
+var R_SHADOW0 = 0.009;
+var R_LENS0   = 0.0275;
+var GRAV0     = 0.00000025;
+var CAPTURE0  = 0.045;
+
+/* it opens as a speck of light and takes about a minute to outgrow the page.
+   feeding it stars hurries that along; left alone it still gets there. */
+var GROW_SECONDS = 70;
+var S_START = 0.14, S_END = 120;
+var grow = 0, S = S_START;
+
+var R_SHADOW = R_SHADOW0 * S;
+var R_LENS   = R_LENS0   * S;
+var GRAV     = GRAV0     * S * S * S;   /* keeps the orbits turning at one rate */
+var CAPTURE  = CAPTURE0  * S;
+var CAPTURE_Z = 1.8;                    /* how far back into the deep it reaches */
+
+/* the turn: the dark goes white, and the white is where the spider lives */
+var ending = false, endT = 0, white = 0;
+var WHITEOUT = 0.8;
+
+var SPACE = 0, WEB = 1;
+var phase = SPACE;
 
 /* ---------------------------------------------------------------- shaders */
 
@@ -62,12 +86,13 @@ var FRAG_FEED =
   /* --- the vortex, close in only */
   '  vec2 ph=vUv-uHole;ph=fract(ph+0.5)-0.5;ph*=asp;' +
   '  float rh=length(ph)+1e-5;' +
-  '  float a=uSwirl*0.028/(rh*90.0+1.0);' +
+  /* the swirl keeps to the well, so it widens as the well does */
+  '  float a=uSwirl*0.028/(rh/(uLens*0.40)+1.0);' +
   '  float s=sin(a),co=cos(a);' +
   '  ph=mat2(co,-s,s,co)*ph;' +
   /* same rule close in, but here the residue is pulled toward the hole, so a
      star being fed on trails a thread of itself into the dark */
-  '  ph*=1.0+0.030/(rh*230.0+1.0);' +
+  '  ph*=1.0+0.030/(rh/(uLens*0.158)+1.0);' +
   '  vec2 uvHole=uHole+ph/asp;' +
   '  float hw=exp(-rh*rh/(uLens*uLens*7.0));' +
   '  vec2 uv=mix(uvStar,uvHole,hw);' +
@@ -93,7 +118,7 @@ var FRAG_PART =
 var FRAG_COMP =
   'precision highp float;varying vec2 vUv;' +
   'uniform sampler2D uSrc;uniform vec2 uHole;' +
-  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare;' +
+  'uniform float uAspect,uShadow,uLens,uTime,uSpin,uFlare,uSpark,uWhite,uBang;' +
   'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
   'float samp(vec2 uv){return texture2D(uSrc,clamp(uv,0.0005,0.9995)).g;}' +
   'void main(){' +
@@ -104,8 +129,13 @@ var FRAG_COMP =
   '  vec2 dir=p/r;' +
   '  float defl=uLens*uLens*1.9/(r*r+uLens*uLens*0.35);' +
   '  defl=min(defl,0.42);' +
+  /* nothing out at the border of the page is bent. without this, a well wider
+     than the screen drags the far side of the frame in over the edges */
+  '  float mx=length(asp)*0.5;' +
+  '  float fade=1.0-smoothstep(mx*0.62,mx*0.96,length((vUv-0.5)*asp));' +
+  '  defl*=fade;' +
   '  vec2 tang=vec2(-dir.y,dir.x);' +
-  '  float drag=uSpin*uLens*uLens*0.55/(r*r+uLens*uLens*0.5);' +
+  '  float drag=uSpin*uLens*uLens*0.55/(r*r+uLens*uLens*0.5)*fade;' +
   '  vec2 base=vUv-(dir*defl-tang*drag)/asp;' +
   '  vec2 off=dir/asp*defl*0.06;' +
   '  float l=samp(base-off)*0.34+samp(base)*0.42+samp(base+off)*0.34;' +
@@ -121,9 +151,20 @@ var FRAG_COMP =
   '  float fx=p.x/(uShadow*6.0);' +
   '  l+=exp(-fy*fy-fx*fx)*uFlare*1.15;' +
   '  l*=smoothstep(uShadow*0.88,uShadow*1.10,r);' +
+  /* while it is still barely there it reads as a plain speck of light */
+  '  float sp=r/0.0048;' +
+  '  l+=exp(-sp*sp)*uSpark*1.5;' +
+  /* the annihilation: a wall of light that falls in on itself */
+  '  float br=0.05+0.40*uBang;' +
+  '  l+=uBang*uBang*1.9*exp(-r*r/(br*br));' +
   '  l+=(hash(vUv*vec2(1024.0,768.0)+uTime)-0.5)*0.02;' +
-  '  l*=1.0-0.5*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
-  '  gl_FragColor=vec4(vec3(l),1.0);' +
+  '  l*=1.0-0.42*pow(length((vUv-0.5)*asp)*0.95,2.2);' +
+  /* the end. the dark turns over and comes out the other way: a white front
+     opens at the hole and runs out past the corners of the page */
+  '  float rf=uWhite*mx*1.42;' +
+  '  float wm=1.0-smoothstep(rf-mx*0.30,rf,r);' +
+  '  l+=(1.0-wm)*uWhite*uWhite*1.6;' +
+  '  gl_FragColor=vec4(vec3(mix(l,1.0,wm)),1.0);' +
   '}';
 
 function compile(type, src) {
@@ -170,11 +211,20 @@ function makeTarget(i) {
   tex[i] = t; fbo[i] = f;
 }
 
+function clearTargets() {
+  for (var i = 0; i < 2; i++) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[i]);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
 function resize() {
   W = Math.floor(window.innerWidth * DPR);
   H = Math.floor(window.innerHeight * DPR);
   canvas.width = W; canvas.height = H;
   makeTarget(0); makeTarget(1);
+  web.resize();
 }
 window.addEventListener('resize', resize);
 
@@ -224,7 +274,9 @@ var SYSTEMS = 46, PLANETS_PER = 3;
 var CONSTS  = 16, STARS_PER  = 7;
 var SYS_SLOTS = SYSTEMS * (1 + PLANETS_PER);
 var CON_SLOTS = CONSTS * STARS_PER;
-var COUNT = 6000;
+/* as many as the machine will stand: the annihilation needs the room */
+var COUNT = (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+             window.innerWidth * window.innerHeight < 380000) ? 7000 : 14000;
 
 var state  = new Uint8Array(COUNT);
 var role   = new Uint8Array(COUNT);
@@ -258,7 +310,7 @@ function placeAnchor(i, deep) {
 function bornPlain(i, deep) {
   placeAnchor(i, deep);
   role[i] = PLAIN; lead[i] = i;
-  mag[i] = 0.12 + Math.random() * 0.62;
+  mag[i] = 0.24 + Math.random() * 0.70;
 }
 
 /* a constellation: one anchor and a handful of stars in a fixed figure */
@@ -266,7 +318,7 @@ function bornConstellation(c, deep) {
   var base = SYS_SLOTS + c * STARS_PER;
   placeAnchor(base, deep);
   role[base] = LEAD; lead[base] = base;
-  mag[base] = 0.35 + Math.random() * 0.5;
+  mag[base] = 0.48 + Math.random() * 0.5;
   ox[base] = 0; oy[base] = 0;
   var spread = 0.10 + Math.random() * 0.22;
   for (var k = 1; k < STARS_PER; k++) {
@@ -274,7 +326,7 @@ function bornConstellation(c, deep) {
     role[i] = MEMBER; lead[i] = base; state[i] = STAR;
     ox[i] = (Math.random()*2-1) * spread;
     oy[i] = (Math.random()*2-1) * spread;
-    mag[i] = 0.22 + Math.random() * 0.5;
+    mag[i] = 0.34 + Math.random() * 0.52;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -291,7 +343,7 @@ function bornSystem(s, deep) {
     orbR[i] = 0.020 + k * 0.016 + Math.random() * 0.008;
     orbP[i] = Math.random() * Math.PI * 2;
     orbS[i] = (0.55 - k * 0.12) * (Math.random() < 0.5 ? 1 : -1);
-    mag[i] = 0.30 + Math.random() * 0.25;
+    mag[i] = 0.38 + Math.random() * 0.28;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -308,6 +360,7 @@ var hole = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
 var target = { x: 0.5, y: 0.5 };
 var dragging = false, spin = 1;
 var captureFlash = 0, consuming = 0, flare = 0;
+var bangT = 0, bangFlash = 0;
 
 /* crossing an edge knocks the drone onto the next step of the ladder */
 var STEPS = [0, 0.5, -0.5, 1, -1, 1.5];
@@ -318,10 +371,10 @@ function capture(i, x, y) {
   px[i] = x; py[i] = y;
   var dx = wrap(x - hole.x) * (W / H), dy = wrap(y - hole.y);
   var r = Math.sqrt(dx*dx + dy*dy) || 1e-4;
-  var orbit = Math.sqrt(GRAV / (r + 0.01)) * (0.92 + Math.random() * 0.16);
-  vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002;
-  vy[i] =  dx / r * orbit + (Math.random()-0.5) * 0.0002;
-  captureFlash += role[i] === SUN ? 1.8 : 0.35;
+  var orbit = Math.sqrt(GRAV / (r + 0.01 * S)) * (0.92 + Math.random() * 0.16);
+  vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002 * S;
+  vy[i] =  dx / r * orbit + (Math.random()-0.5) * 0.0002 * S;
+  captureFlash = Math.min(captureFlash + (role[i] === SUN ? 1.8 : 0.35), 40);
 }
 
 (function seedSky() {
@@ -333,6 +386,9 @@ function capture(i, x, y) {
 /* ------------------------------------------------------------- the pointer */
 
 var lastPtr = { x: 0.5, y: 0.5, t: 0 }, ptrVel = { x: 0, y: 0 };
+/* the first finger down owns the hole; the rest are ignored until it lifts,
+   or two of them fight over the target and the whole thing shakes apart */
+var ptrId = null;
 
 function pointer(e) {
   var t = e.touches ? e.touches[0] : e;
@@ -346,6 +402,8 @@ function pointer(e) {
   target.x = nx; target.y = ny;
 }
 canvas.addEventListener('pointerdown', function (e) {
+  if (ptrId !== null) return;
+  ptrId = e.pointerId;
   dragging = true; ptrVel.x = ptrVel.y = 0;
   lastPtr.t = performance.now(); lastPtr.x = target.x; lastPtr.y = target.y;
   pointer(e);
@@ -353,8 +411,12 @@ canvas.addEventListener('pointerdown', function (e) {
   flare += 0.45;                       /* a little pulse of appetite */
   audio.start();
 });
-canvas.addEventListener('pointermove', function (e) { if (dragging) pointer(e); });
-function release() {
+canvas.addEventListener('pointermove', function (e) {
+  if (dragging && e.pointerId === ptrId) pointer(e);
+});
+function release(e) {
+  if (e.pointerId !== ptrId) return;
+  ptrId = null;
   if (!dragging) return;
   dragging = false;
   /* let go while moving and it sails off, wrapping round the screen */
@@ -366,12 +428,22 @@ canvas.addEventListener('pointercancel', release);
 /* ------------------------------------------------------------------ audio */
 
 var audio = (function () {
-  var ctx = null, started = false;
+  var ctx = null, started = false, done = false;
   var droneA, droneB, sub, hum, lp, bp, noiseGain, pan, master, droneGain;
 
   var ROOT = 29.135;          /* B flat */
   var BEAT = 1 / 62;
   var MICROTONE = 0.13;       /* about three quarters of a semitone either way */
+
+  /* the whistle the explosion leaves in the ears, and the ladder of notes that
+     hangs off the underside of it. eight steps, in cents below the whistle: a
+     major seventh stacked twice over, every step of it bent off true, so it
+     lands somewhere between a pelog scale and a piano nobody has tuned. the
+     first knot is the top of the ladder and each one after it fills in lower. */
+  var TINN = 2317;
+  var PELOG = [-2288, -2749, -3113, -3492, -3866, -4271, -4590, -4986];
+
+  var tinnOsc = null, tinnGain = null, chord = [];
 
   function noiseBuffer(c) {
     var len = c.sampleRate * 3, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
@@ -380,7 +452,7 @@ var audio = (function () {
   }
 
   function start() {
-    if (started) return;
+    if (started || done) return;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     started = true;
@@ -430,8 +502,8 @@ var audio = (function () {
     master.gain.linearRampToValueAtTime(0.9, ctx.currentTime + 8);
   }
 
-  function update(hx, hy, eat, bending, jump) {
-    if (!started || !ctx) return;
+  function update(hx, hy, eat, bending, jump, grown) {
+    if (!started || !ctx || done) return;
     var t = ctx.currentTime;
     /* the bend follows the hand while dragging, and drifts back slowly after */
     var f = ROOT * jump * Math.pow(2, (hy - 0.5) * MICROTONE);
@@ -443,10 +515,145 @@ var audio = (function () {
     lp.frequency.setTargetAtTime(85 + hx * 300, t, 4);
     bp.frequency.setTargetAtTime(500 + hx * 2600, t, 3);
     if (pan) pan.pan.setTargetAtTime((hx - 0.5) * 1.4, t, 3);
-    noiseGain.gain.setTargetAtTime(0.05 + Math.min(eat, 1) * 0.30, t, 0.35);
+    /* the crackle never leaves; it thickens as it feeds and as the thing grows */
+    noiseGain.gain.setTargetAtTime(0.05 + grown * 0.11 + Math.min(eat, 1) * 0.30, t, 0.35);
   }
 
-  return { start: start, update: update };
+  /* the whistle. it comes up under the tail of the blast and stays for as long
+     as the white does, wandering a couple of cents either way like a real one */
+  function tinnitus(at) {
+    if (!ctx || tinnOsc) return;
+    tinnOsc = ctx.createOscillator(); tinnOsc.type = 'sine';
+    tinnOsc.frequency.value = TINN;
+    tinnGain = ctx.createGain();
+    tinnGain.gain.setValueAtTime(0.0001, at);
+    tinnGain.gain.exponentialRampToValueAtTime(0.030, at + 1.8);
+    var lf = ctx.createOscillator(); lf.type = 'sine'; lf.frequency.value = 1 / 11;
+    var lg = ctx.createGain(); lg.gain.value = 3.5;
+    lf.connect(lg); lg.connect(tinnOsc.frequency); lf.start(at);
+    tinnOsc.connect(tinnGain); tinnGain.connect(ctx.destination);
+    tinnOsc.start(at);
+  }
+
+  /* the explosion: the drone is cut, a wall of noise and a sub thump go off
+     together, and the noise is wiped upward off the top of the range until
+     there is nothing left of it but the whistle */
+  function blast() {
+    if (!started || !ctx || done) return;
+    done = true;
+    var t = ctx.currentTime;
+
+    droneGain.gain.cancelScheduledValues(t);
+    droneGain.gain.setTargetAtTime(0.0001, t, 0.09);
+    noiseGain.gain.cancelScheduledValues(t);
+    noiseGain.gain.setTargetAtTime(0.0001, t, 0.12);
+    master.gain.cancelScheduledValues(t);
+    master.gain.setTargetAtTime(0.0001, t + 0.22, 0.14);
+
+    var src = ctx.createBufferSource();
+    src.buffer = noiseBuffer(ctx); src.loop = true;
+    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 1.7;
+    hp.frequency.setValueAtTime(38, t);
+    hp.frequency.exponentialRampToValueAtTime(11000, t + 0.50);
+    var ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(0.95, t + 0.025);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.70);
+    src.connect(hp); hp.connect(ng); ng.connect(ctx.destination);
+    src.start(t); src.stop(t + 0.9);
+
+    var thud = ctx.createOscillator(); thud.type = 'sine';
+    thud.frequency.setValueAtTime(124, t);
+    thud.frequency.exponentialRampToValueAtTime(23, t + 0.45);
+    var tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.0001, t);
+    tg.gain.exponentialRampToValueAtTime(0.85, t + 0.02);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
+    thud.connect(tg); tg.connect(ctx.destination);
+    thud.start(t); thud.stop(t + 0.9);
+
+    tinnitus(t + 0.40);
+  }
+
+  /* the annihilation. a charge going off, and then a long fall: the noise is
+     filtered downward until it is nothing but a deep rumble, and what is left
+     under it when that goes is the hiss and the sub of the black hole again */
+  function wake() {
+    if (!started || !ctx) { start(); return; }
+    var t = ctx.currentTime;
+
+    /* the chord and the whistle are pulled down into it */
+    for (var i = 0; i < chord.length; i++) {
+      var c = chord[i];
+      c.g.gain.cancelScheduledValues(t);
+      c.g.gain.setTargetAtTime(0.0001, t, 0.20);
+      c.o.stop(t + 2.4); c.o2.stop(t + 2.4);
+    }
+    chord.length = 0;
+    if (tinnGain) {
+      tinnGain.gain.cancelScheduledValues(t);
+      tinnGain.gain.setTargetAtTime(0.0001, t, 0.30);
+      tinnOsc.stop(t + 3.0); tinnOsc = null; tinnGain = null;
+    }
+
+    var src = ctx.createBufferSource();
+    src.buffer = noiseBuffer(ctx); src.loop = true;
+    var lpb = ctx.createBiquadFilter(); lpb.type = 'lowpass'; lpb.Q.value = 3.2;
+    lpb.frequency.setValueAtTime(9000, t);
+    lpb.frequency.exponentialRampToValueAtTime(46, t + 2.8);
+    var ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(1.0, t + 0.04);    /* the oomph */
+    ng.gain.setTargetAtTime(0.45, t + 0.22, 0.8);
+    ng.gain.setTargetAtTime(0.0001, t + 3.6, 1.2);
+    src.connect(lpb); lpb.connect(ng); ng.connect(ctx.destination);
+    src.start(t); src.stop(t + 8);
+
+    var boom = ctx.createOscillator(); boom.type = 'sine';
+    boom.frequency.setValueAtTime(88, t);
+    boom.frequency.exponentialRampToValueAtTime(25, t + 1.2);
+    var bg = ctx.createGain();
+    bg.gain.setValueAtTime(0.0001, t);
+    bg.gain.exponentialRampToValueAtTime(0.9, t + 0.03);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t + 2.5);
+    boom.connect(bg); bg.connect(ctx.destination);
+    boom.start(t); boom.stop(t + 2.6);
+
+    /* the bed comes back up underneath the rumble as it goes */
+    done = false;
+    droneGain.gain.cancelScheduledValues(t);
+    droneGain.gain.setValueAtTime(0.0001, t);
+    droneGain.gain.setTargetAtTime(0.22, t + 1.2, 1.5);
+    noiseGain.gain.cancelScheduledValues(t);
+    noiseGain.gain.setValueAtTime(0.0001, t);
+    noiseGain.gain.setTargetAtTime(0.05, t + 1.4, 1.7);
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(0.0001, t);
+    master.gain.linearRampToValueAtTime(0.9, t + 2.8);
+  }
+
+  /* a knot tied: one low note off the ladder, held. they do not decay, so by
+     the eighth the whole chord is standing there under the whistle */
+  function knot(n) {
+    if (!started) start();
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    tinnitus(t);
+    var f = TINN * Math.pow(2, PELOG[Math.min(n, PELOG.length) - 1] / 1200);
+    var o  = ctx.createOscillator(); o.type  = 'triangle'; o.frequency.value = f;
+    var o2 = ctx.createOscillator(); o2.type = 'sine';
+    o2.frequency.value = f * Math.pow(2, 1.1 / 1200);   /* a hair sharp, so it beats */
+    var lpk = ctx.createBiquadFilter(); lpk.type = 'lowpass';
+    lpk.frequency.value = f * 4.5; lpk.Q.value = 0.7;
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.075, t + 0.55);   /* sustained, not struck */
+    o.connect(lpk); o2.connect(lpk); lpk.connect(g); g.connect(ctx.destination);
+    o.start(t); o2.start(t);
+    chord.push({ o: o, o2: o2, g: g });
+  }
+
+  return { start: start, update: update, blast: blast, wake: wake, knot: knot };
 })();
 
 document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.start(); });
@@ -455,11 +662,24 @@ document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.sta
 
 var c2 = [0, 0], time = 0;
 
-function frame(ms) {
-  requestAnimationFrame(frame);
+function tick(ms) {
+  requestAnimationFrame(tick);
   var now = ms * 0.001;
   var dt = Math.min(now - time, 0.05) || 0.016;
   time = now;
+  if (phase === SPACE) space(dt); else web.step(dt);
+}
+
+function space(dt) {
+  /* ---- it grows. slowly on its own, faster on what it has eaten */
+  grow = Math.min(1, grow + dt / GROW_SECONDS + Math.min(consuming, 1.4) * dt * 0.0042);
+  S = S_START * Math.pow(S_END / S_START, grow);
+  R_SHADOW = R_SHADOW0 * S;
+  R_LENS   = R_LENS0   * S;
+  GRAV     = GRAV0 * S * S * S;
+  CAPTURE  = CAPTURE0 * S;
+  CAPTURE_Z = 1.8 + grow * 1.35;
+  var spark = Math.pow(Math.max(0, 1 - grow / 0.25), 1.5);
 
   if (dragging) {
     hole.vx = hole.vx * 0.965 + wrap(target.x - hole.x) * 0.0016;
@@ -475,15 +695,31 @@ function frame(ms) {
     hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
   }
 
+  bangT = Math.max(0, bangT - dt);
+  bangFlash = Math.max(0, bangFlash - dt * 1.4);
+  var boost = bangT * 0.2;                 /* the debris runs bright and fat */
+
   var speed = Math.sqrt(hole.vx*hole.vx + hole.vy*hole.vy);
   captureFlash *= 0.94;
   consuming += (Math.min(captureFlash * 0.5, 1.4) - consuming) * 0.06;
   /* mostly dark; it brightens when prodded, when moving, and when feeding */
   flare = flare * 0.93 + consuming * 0.020 + Math.min(speed * 55, 0.5) * 0.030;
   if (flare > 0.9) flare = 0.9;
-  audio.update(hole.x, hole.y, consuming, dragging, jump);
+  audio.update(hole.x, hole.y, consuming, dragging, jump, grow);
 
   var aspect = W / H;
+
+  /* ---- the end comes when the well is wider than the page: any further and
+     the lens is bending in pixels from the far side of the screen */
+  var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
+  if (!ending && R_LENS * 1.2 >= halfDiag) { ending = true; audio.blast(); }
+  if (ending) {
+    endT += dt;
+    var w = Math.min(1, endT / WHITEOUT);
+    /* it goes off, rather than fading up: nearly all of it in the first third */
+    white = 1 - Math.pow(1 - w, 3.2);
+    if (endT >= WHITEOUT + 0.10) { web.enter(); return; }
+  }
 
   for (var i = 0; i < COUNT; i++) {
     var o = i * 4, x, y, lum, size, r = 1;
@@ -519,36 +755,41 @@ function frame(ms) {
         if (ddx*ddx + ddy*ddy < CAPTURE*CAPTURE) { capture(i, x, y); continue; }
       }
 
-      lum = mag[i] * Math.min(1, iz * 0.55) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
-      size = (role[i] === SUN ? 2.4 : role[i] === PLANET ? 0.8 : 1.0) * (0.7 + iz * 0.5) * DPR;
+      lum = mag[i] * Math.min(1, iz * 0.72) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
+      size = (role[i] === SUN ? 2.6 : role[i] === PLANET ? 0.9 : 1.15) * (0.75 + iz * 0.5) * DPR;
     } else {
       var dx = wrap(hole.x - px[i]) * aspect, dy = wrap(hole.y - py[i]);
       var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
       var ux = dx / r, uy = dy / r;
 
-      var g = GRAV / (r2 + 0.0009);
+      var g = GRAV / (r2 + 0.0009 * S * S);
       vx[i] += ux / aspect * g; vy[i] += uy * g;
 
       curl(px[i]*3.4 + seed[i]*0.01, py[i]*3.4 + time*0.05, c2);
-      var turb = 0.0000060 * Math.min(1, r * 4.0);
+      var turb = 0.0000060 * S * Math.min(1, r / (0.25 * S));
       vx[i] += c2[0] * turb; vy[i] += c2[1] * turb;
 
       vx[i] *= 0.9995; vy[i] *= 0.9995;
       px[i] += vx[i]; py[i] += vy[i];
+      /* debris thrown clear of the page does not come round the other side:
+         it is a star again, and a long way off */
+      if (bangT > 0 && (px[i] < 0 || px[i] >= 1 || py[i] < 0 || py[i] >= 1)) {
+        rebirth(i, true); continue;      /* the same test the wrap below makes */
+      }
       px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
 
       if (r < R_SHADOW * 0.85) {
-        captureFlash += role[i] === SUN ? 2.2 : 0.5;
-        flare += role[i] === SUN ? 0.10 : 0.012;
+        captureFlash = Math.min(captureFlash + (role[i] === SUN ? 2.2 : 0.5), 40);
+        flare = Math.min(flare + (role[i] === SUN ? 0.10 : 0.012), 0.9);
         rebirth(i, true); continue;
       }
-      if (r > 0.62) { rebirth(i, true); continue; }
+      if (r > Math.max(0.62, R_SHADOW * 1.5) + bangT * 0.42) { rebirth(i, true); continue; }
 
       x = px[i]; y = py[i];
       var sp = Math.abs(vx[i]) + Math.abs(vy[i]);
       var near = Math.min(1, R_LENS * 1.4 / r);
-      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) + sp * 120);
-      size = (0.9 + near * 3.0) * DPR;
+      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) * (1 + boost * 0.6) + sp * 120);
+      size = (0.9 + near * 3.0) * DPR * (1 + boost * 1.2);
     }
 
     verts[o]   = x * 2 - 1;
@@ -605,13 +846,453 @@ function frame(ms) {
   gl.uniform1f(gl.getUniformLocation(progComp, 'uTime'), time);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uSpin'), spin);
   gl.uniform1f(gl.getUniformLocation(progComp, 'uFlare'), flare);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uSpark'), spark);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uWhite'), white);
+  gl.uniform1f(gl.getUniformLocation(progComp, 'uBang'), bangFlash);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   cur = dst;
 }
 
+/* ---------------------------------------------------------------- the bang
+
+   everything the spider gathered, let go of at once, from wherever she was
+   standing. what flies far enough out stops being debris and is a star again,
+   and what is left in the middle is a speck of light with an appetite.      */
+
+function bang(nx, ny) {
+  hole.x = nx; hole.y = ny; hole.vx = 0; hole.vy = 0;
+  target.x = nx; target.y = ny; dragging = false;
+
+  grow = 0; S = S_START;
+  R_SHADOW = R_SHADOW0 * S; R_LENS = R_LENS0 * S;
+  GRAV = GRAV0 * S * S * S; CAPTURE = CAPTURE0 * S; CAPTURE_Z = 1.8;
+  ending = false; endT = 0; white = 0;
+  captureFlash = 0; consuming = 0; flare = 0.9;
+  bangT = 5; bangFlash = 1;
+  clearTargets();
+
+  var asp = W / H;
+  for (var i = 0; i < COUNT; i++) {
+    state[i] = CAUGHT;                 /* roles are left alone: the groups keep
+                                          their shape and come back whole */
+    var a = Math.random() * Math.PI * 2;
+    var sp = 0.0012 + Math.pow(Math.random(), 2.0) * 0.011;
+    /* on a small ball around it, never on it: anything sitting exactly on the
+       shadow is eaten on the first frame and comes back as a far-off star */
+    var r0 = 0.004 + Math.random() * 0.013;
+    px[i] = nx + Math.cos(a) * r0 / asp;
+    py[i] = ny + Math.sin(a) * r0;
+    px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
+    vx[i] = Math.cos(a) * sp / asp;
+    vy[i] = Math.sin(a) * sp;
+    mag[i] = 0.55 + Math.random() * 0.9;
+    seed[i] = Math.random() * 1000;
+  }
+  audio.wake();
+}
+
+/* --------------------------------------------------------------- the white
+
+   the far side of the whiteout. a spider the size of a full stop goes about
+   tying the specks of matter that float there; a tied speck darkens and stays
+   where it is put. drag a speck to her to feed her, or drag it out of her
+   way. eight knots and the web hauls itself in.                             */
+
+var web = (function () {
+  var cv = document.getElementById('w');
+  var g = cv.getContext('2d');
+
+  var WALK = 0, TIE = 1, HAUL = 2;
+  var NEEDED = 8, MOTES = 18;
+  var TWO = Math.PI * 2;
+
+  var motes = [], strands = [], tied = 0;
+  var spider = { x:0, y:0, a:0, step:0, state:WALK, hold:0, prey:-1 };
+
+  /* eight legs, each one with a foot of its own that stays where it is put.
+     a foot is only picked up when the body has walked far enough off it, and
+     while it is in the air the knee rides high; that is the whole gait. */
+  var REST  = [0.62, 1.22, 1.98, 2.62];      /* where each leg sits, front to back */
+  var REACH = [14.5, 16.0, 15.0, 12.5];      /* and how far out */
+  var legs = [];
+  for (var _s = -1; _s <= 1; _s += 2)
+    for (var _k = 0; _k < 4; _k++)
+      legs.push({ s:_s, k:_k, x:0, y:0, fx:0, fy:0, tx:0, ty:0, up:0, w:(_k * 0.5 + (_s > 0 ? 0.25 : 0)) });
+  var grab = -1, ptr = { x:0, y:0, down:false, id:null };
+  var t = 0, blackT = -1, U = 1, taut = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function footIdeal(L, out) {
+    /* never quite still: even stopped, the feet fidget a little */
+    var an = spider.a + L.s * REST[L.k] + Math.sin(t * 1.1 + L.w * 5.1) * 0.045;
+    var re = (REACH[L.k] + Math.sin(t * 0.9 + L.w * 3.7) * 0.5) * U;
+    out[0] = spider.x + Math.cos(an) * re;
+    out[1] = spider.y + Math.sin(an) * re;
+  }
+
+  var _fi = [0, 0];
+  function plantFeet() {
+    for (var i = 0; i < legs.length; i++) {
+      footIdeal(legs[i], _fi);
+      legs[i].x = legs[i].fx = _fi[0]; legs[i].y = legs[i].fy = _fi[1];
+      legs[i].up = 0;
+    }
+  }
+
+  /* the feet. no more than three off the ground at once, and never both of a
+     pair, so there is always something under her */
+  function walkLegs(dt) {
+    var lifted = 0, i, L;
+    for (i = 0; i < legs.length; i++) if (legs[i].up > 0) lifted++;
+    for (i = 0; i < legs.length; i++) {
+      L = legs[i];
+      if (L.up > 0) {
+        L.up = Math.max(0, L.up - dt * 3.4);
+        var q = 1 - L.up;                        /* 0 at lift, 1 at touchdown */
+        var e = q * q * (3 - 2 * q);
+        L.x = L.fx + (L.tx - L.fx) * e;
+        L.y = L.fy + (L.ty - L.fy) * e;
+        continue;
+      }
+      footIdeal(L, _fi);
+      var dx = _fi[0] - L.x, dy = _fi[1] - L.y;
+      if (dx*dx + dy*dy > (7.5 * U) * (7.5 * U) && lifted < 3 &&
+          legs[(i + 4) % 8].up <= 0) {
+        L.fx = L.x; L.fy = L.y;
+        /* she puts it down a little ahead of where it wanted to go */
+        L.tx = _fi[0] + Math.cos(spider.a) * 3.4 * U + rand(-1.4, 1.4) * U;
+        L.ty = _fi[1] + Math.sin(spider.a) * 3.4 * U + rand(-1.4, 1.4) * U;
+        L.up = 1; lifted++;
+      }
+    }
+  }
+
+  function nearestFree(x, y, within) {
+    var best = -1, bd = within ? within * within : 1e12;
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i]; if (m.tied) continue;
+      var dx = m.x - x, dy = m.y - y, d = dx*dx + dy*dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function nearestTied(skip) {
+    var s = motes[skip], best = -1, bd = 1e12;
+    for (var i = 0; i < motes.length; i++) {
+      if (i === skip || !motes[i].tied) continue;
+      var dx = motes[i].x - s.x, dy = motes[i].y - s.y, d = dx*dx + dy*dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function enter() {
+    phase = WEB;
+    canvas.style.display = 'none';
+    cv.style.display = 'block';
+    layout();
+    motes.length = 0; strands.length = 0;
+    tied = 0; t = 0; blackT = -1; taut = 0; grab = -1; ptr.down = false;
+    var m = 70 * U;
+    for (var i = 0; i < MOTES; i++)
+      motes.push({ x:rand(m, W - m), y:rand(m, H - m), vx:rand(-8,8), vy:rand(-8,8),
+                   s:rand(0, 900), r:rand(1.9, 3.4), tied:false, dark:0 });
+    spider.x = rand(W * 0.3, W * 0.7);
+    spider.y = rand(H * 0.3, H * 0.7);
+    spider.a = rand(0, TWO); spider.step = 0;
+    spider.state = WALK; spider.hold = 0; spider.prey = -1;
+    plantFeet();
+  }
+
+  function layout() {
+    U = DPR;
+    cv.width = W; cv.height = H;
+    var m = 14 * U;
+    for (var i = 0; i < motes.length; i++) {
+      motes[i].x = Math.max(m, Math.min(W - m, motes[i].x));
+      motes[i].y = Math.max(m, Math.min(H - m, motes[i].y));
+    }
+    spider.x = Math.max(m, Math.min(W - m, spider.x));
+    spider.y = Math.max(m, Math.min(H - m, spider.y));
+   plantFeet();
+  }
+
+  /* ---- the specks. they drift on the same curl noise as the dust does */
+  function drift(dt) {
+    var mg = 16 * U;
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i];
+      if (m.tied) {
+        m.x += Math.sin(t * 0.7 + m.s) * 0.05 * U;
+        m.y += Math.cos(t * 0.61 + m.s) * 0.05 * U;
+        if (m.dark < 1) m.dark = Math.min(1, m.dark + dt * 1.5);
+        continue;
+      }
+      curl(m.x / (90 * U) + m.s, m.y / (90 * U) + t * 0.06, c2);
+      m.vx += c2[0] * 34 * dt; m.vy += c2[1] * 34 * dt;
+
+      if (grab === i) {
+        m.vx += (ptr.x - m.x) * 26 * dt;
+        m.vy += (ptr.y - m.y) * 26 * dt;
+        m.vx *= 0.86; m.vy *= 0.86;
+      } else {
+        if (ptr.down) {                      /* the rest scatter out of the way */
+          var dx = m.x - ptr.x, dy = m.y - ptr.y, d2 = dx*dx + dy*dy;
+          var R = 58 * U;
+          if (d2 < R * R) {
+            var d = Math.sqrt(d2) + 0.001;
+            var f = (1 - d / R) * 300 * dt;
+            m.vx += dx / d * f; m.vy += dy / d * f;
+          }
+        }
+        m.vx *= 0.985; m.vy *= 0.985;
+      }
+
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      if (m.x < mg) { m.x = mg; m.vx = Math.abs(m.vx) * 0.5; }
+      if (m.x > W - mg) { m.x = W - mg; m.vx = -Math.abs(m.vx) * 0.5; }
+      if (m.y < mg) { m.y = mg; m.vy = Math.abs(m.vy) * 0.5; }
+      if (m.y > H - mg) { m.y = H - mg; m.vy = -Math.abs(m.vy) * 0.5; }
+    }
+  }
+
+  /* ---- she goes for whichever speck is nearest, and never in a straight line */
+  function hunt(dt) {
+    if (spider.state === TIE) {
+      spider.hold -= dt;
+      spider.step += dt * 1.8;
+      if (spider.hold <= 0) {
+        var p = spider.prey;
+        spider.prey = -1; spider.state = WALK;   /* before the knot: the eighth
+                                                    one puts her into the haul */
+        knot(p);
+      }
+      return;
+    }
+    if (spider.prey < 0 || motes[spider.prey].tied)
+      spider.prey = nearestFree(spider.x, spider.y);
+    if (spider.prey < 0) return;
+
+    var m = motes[spider.prey];
+    var dx = m.x - spider.x, dy = m.y - spider.y;
+    var d = Math.sqrt(dx*dx + dy*dy) || 1;
+    if (d < 15 * U) { spider.state = TIE; spider.hold = 1.15; return; }
+
+    /* she does not walk straight at it, but the wander goes out of her the
+       nearer she gets, and she slows and turns tighter for the last of it —
+       at full stride she cannot turn inside her own reach */
+    var close = Math.min(1, d / (110 * U));
+    var want = Math.atan2(dy, dx) + Math.sin(t * 1.6 + spider.s) * 0.30 * close;
+    var da = Math.atan2(Math.sin(want - spider.a), Math.cos(want - spider.a));
+    spider.a += da * Math.min(1, dt * 4.0);
+    var sp = 40 * U * (0.30 + 0.70 * close);
+    spider.x += Math.cos(spider.a) * sp * dt;
+    spider.y += Math.sin(spider.a) * sp * dt;
+    spider.step += dt * (1.8 + 3.4 * close);
+  }
+
+  function knot(i) {
+    var m = motes[i];
+    m.tied = true; m.vx = m.vy = 0;
+    strands.push({ a:i, b:-1, s:rand(0, 900) });      /* b < 0: tied to her */
+    var j = nearestTied(i);
+    if (j >= 0) strands.push({ a:i, b:j, s:rand(0, 900) });
+    tied++;
+    audio.knot(tied);
+    if (tied >= NEEDED) { spider.state = HAUL; spider.prey = -1; }
+  }
+
+  /* ---- eight of them, and the web reels itself in. it starts as a lean and
+         ends as a magnet: whatever is tied on falls faster the closer it gets */
+  function haul(dt) {
+    var home = 0;
+    taut = Math.min(1, taut + dt * 0.5);
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i]; if (!m.tied) continue;
+      if (m.home) {
+        m.x = spider.x + Math.sin(t * 30 + m.s) * 0.7 * U;
+        m.y = spider.y + Math.cos(t * 27 + m.s) * 0.7 * U;
+        home++; continue;
+      }
+      var dx = spider.x - m.x, dy = spider.y - m.y;
+      var d = Math.sqrt(dx*dx + dy*dy) || 1;
+      var acc = (60 + 13000 / (d / U + 40)) * U;
+      m.vx += dx / d * acc * dt; m.vy += dy / d * acc * dt;
+      m.vx *= 0.99; m.vy *= 0.99;
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      /* measured after the step, or a fast one steps clean over the middle */
+      var ex = spider.x - m.x, ey = spider.y - m.y;
+      if (ex*ex + ey*ey < 100 * U * U) { m.home = true; m.x = spider.x; m.y = spider.y; home++; }
+    }
+    spider.step += dt * 1.6;
+    if (home >= NEEDED && blackT < 0) blackT = 0;
+  }
+
+  /* ---- and the white is taken back the way the black was */
+  function closing(dt) {
+    blackT += dt;
+    var hold = 0.34;
+    if (blackT < hold) {                    /* everything she has, in one place */
+      var q = blackT / hold;
+      g.fillStyle = '#000';
+      g.beginPath(); g.arc(spider.x, spider.y, (4 + 30 * q * q) * U, 0, TWO); g.fill();
+      return;
+    }
+    var k = Math.min(1, (blackT - hold) / 0.62);
+    var r = k * k * Math.sqrt(W*W + H*H) * 1.15;
+    var gr = g.createRadialGradient(spider.x, spider.y, Math.max(0.01, r * 0.7),
+                                    spider.x, spider.y, r);
+    gr.addColorStop(0, 'rgba(0,0,0,1)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(spider.x, spider.y, r, 0, TWO); g.fill();
+    if (k >= 1) {
+      phase = SPACE;
+      cv.style.display = 'none';
+      canvas.style.display = 'block';
+      bang(spider.x / W, 1 - spider.y / H);
+    }
+  }
+
+  /* the threads are not drawn as a curve but walked along, and every step of
+     the way is pushed about by the same curl field the specks drift on. so a
+     thread sags, and wanders, and the wander crawls along it */
+  var SEG = 14;
+  function drawWeb() {
+    g.lineCap = 'round';
+    for (var i = 0; i < strands.length; i++) {
+      var st = strands[i], a = motes[st.a], bx, by;
+      if (st.b < 0) { bx = spider.x; by = spider.y; }
+      else { bx = motes[st.b].x; by = motes[st.b].y; }
+      var dx = bx - a.x, dy = by - a.y;
+      var len = Math.sqrt(dx*dx + dy*dy) || 1;
+      var nx = -dy / len, ny = dx / len;
+      var slack = len * (0.050 + 0.075 * Math.sin(t * 0.55 + st.s)) * (1 - taut * 0.94);
+      var wob   = len * 0.055 * (1 - taut * 0.94);
+      g.strokeStyle = 'rgba(0,0,0,' + (0.10 + 0.18 * a.dark).toFixed(3) + ')';
+      g.lineWidth = (0.7 + 0.5 * a.dark) * U;
+      g.beginPath();
+      for (var q = 0; q <= SEG; q++) {
+        var u = q / SEG, bell = Math.sin(u * Math.PI);
+        var x = a.x + dx * u, y = a.y + dy * u;
+        curl(x / (110 * U) + st.s, y / (110 * U) + t * 0.09, c2);
+        x += (nx * slack + c2[0] * wob) * bell;
+        y += (ny * slack + c2[1] * wob) * bell;
+        if (q === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+  }
+
+  /* a speck is not a dot. it is out of focus: the edge is the darkest part of
+     it and the middle is nearly clear, with a highlight sitting off-centre, and
+     the outline of the whole thing breathes so it is never quite a circle */
+  var RIM = 16;
+  function drawMotes() {
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i];
+      var d = m.dark;
+      var R = m.r * U * (1.85 - 0.30 * d);
+      var gr = g.createRadialGradient(m.x - R * 0.24, m.y - R * 0.28, R * 0.04,
+                                      m.x, m.y, R);
+      gr.addColorStop(0.00, 'rgba(0,0,0,' + (0.05 + 0.25 * d).toFixed(3) + ')');
+      gr.addColorStop(0.42, 'rgba(0,0,0,' + (0.17 + 0.48 * d).toFixed(3) + ')');
+      gr.addColorStop(0.84, 'rgba(0,0,0,' + (0.29 + 0.64 * d).toFixed(3) + ')');
+      gr.addColorStop(1.00, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.beginPath();
+      for (var q = 0; q < RIM; q++) {
+        var an = q / RIM * TWO;
+        var rr = R * (1 + 0.10 * Math.sin(an * 3 + t * 0.7 + m.s) +
+                          0.06 * Math.sin(an * 5 - t * 0.45 + m.s * 1.7));
+        var x = m.x + Math.cos(an) * rr, y = m.y + Math.sin(an) * rr;
+        if (q === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath(); g.fill();
+      if (d > 0.05) {                       /* a knot has a little halo to it */
+        g.strokeStyle = 'rgba(0,0,0,' + (0.13 * d).toFixed(3) + ')';
+        g.lineWidth = 0.8 * U;
+        g.beginPath(); g.arc(m.x, m.y, R + 2.4 * U, 0, TWO); g.stroke();
+      }
+    }
+  }
+
+  /* two bones to a leg, and the knee is wherever it has to be to reach the
+     foot. a leg in the air folds tighter, which throws its knee up and out */
+  function drawSpider() {
+    var cx = spider.x, cy = spider.y, a = spider.a;
+    var ca = Math.cos(a), sa = Math.sin(a);
+    g.lineCap = 'round';
+    for (var i = 0; i < legs.length; i++) {
+      var L = legs[i];
+      var hip = a + L.s * REST[L.k] * 0.45;
+      var hx = cx + Math.cos(hip) * 2.4 * U, hy = cy + Math.sin(hip) * 2.4 * U;
+      var L1 = 7.6 * U * (1 + 0.30 * (L.up > 0 ? Math.sin(Math.PI * (1 - L.up)) : 0));
+      var L2 = 10.0 * U;
+      var dx = L.x - hx, dy = L.y - hy;
+      var d = Math.min(Math.sqrt(dx*dx + dy*dy) || 1e-3, (L1 + L2) * 0.995);
+      var ux = dx / (Math.sqrt(dx*dx + dy*dy) || 1e-3), uy = dy / (Math.sqrt(dx*dx + dy*dy) || 1e-3);
+      var m = (d*d + L1*L1 - L2*L2) / (2*d);
+      var h = Math.sqrt(Math.max(0, L1*L1 - m*m));
+      var kx = hx + ux * m - uy * h * L.s;
+      var ky = hy + uy * m + ux * h * L.s;
+      g.strokeStyle = 'rgba(0,0,0,' + (L.up > 0 ? 0.62 : 0.88) + ')';
+      g.lineWidth = (L.up > 0 ? 0.8 : 1.0) * U;
+      g.beginPath(); g.moveTo(hx, hy); g.lineTo(kx, ky);
+      g.lineTo(hx + ux * d, hy + uy * d); g.stroke();
+    }
+    g.fillStyle = '#000';
+    g.beginPath();
+    g.ellipse(cx - ca * 2.7 * U, cy - sa * 2.7 * U, 3.4 * U, 2.9 * U, a, 0, TWO);
+    g.fill();
+    g.beginPath();
+    g.ellipse(cx + ca * 1.7 * U, cy + sa * 1.7 * U, 2.0 * U, 1.7 * U, a, 0, TWO);
+    g.fill();
+  }
+
+  function step(dt) {
+    t += dt;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, W, H);
+    drift(dt);
+    if (spider.state === HAUL) haul(dt); else hunt(dt);
+    walkLegs(dt);
+    drawWeb(); drawMotes(); drawSpider();
+    if (blackT >= 0) closing(dt);
+  }
+
+  function at(e) {
+    var p = e.touches ? e.touches[0] : e;
+    ptr.x = p.clientX * DPR; ptr.y = p.clientY * DPR;
+  }
+  cv.addEventListener('pointerdown', function (e) {
+    if (ptr.id !== null) return;            /* one hand at a time in here too */
+    ptr.id = e.pointerId;
+    audio.start(); at(e); ptr.down = true;
+    if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
+    grab = nearestFree(ptr.x, ptr.y, 110 * U);
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (ptr.down && e.pointerId === ptr.id) at(e);
+  });
+  function drop(e) {
+    if (e.pointerId !== ptr.id) return;
+    ptr.id = null; ptr.down = false; grab = -1;
+  }
+  cv.addEventListener('pointerup', drop);
+  cv.addEventListener('pointercancel', drop);
+
+  spider.s = Math.random() * 900;
+
+  return { enter: enter, step: step, resize: layout };
+})();
+
 resize();
-requestAnimationFrame(frame);
+requestAnimationFrame(tick);
 
 })();
 </script>
