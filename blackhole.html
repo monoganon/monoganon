@@ -614,7 +614,7 @@ var audio = (function () {
       var c = chord[i];
       c.g.gain.cancelScheduledValues(t);
       c.g.gain.setTargetAtTime(0.0001, t, 0.20);
-      c.o.stop(t + 2.4); c.o2.stop(t + 2.4);
+      c.o.stop(t + 2.4);
     }
     chord.length = 0;
     if (tinnGain) {
@@ -668,11 +668,9 @@ var audio = (function () {
     tinnitus(t);
     var last = (n >= PELOG.length);
     var f = TINN * Math.pow(2, PELOG[Math.min(n, PELOG.length) - 1] / 1200);
-    var o  = ctx.createOscillator(); o.type  = 'triangle'; o.frequency.value = f;
-    var o2 = ctx.createOscillator(); o2.type = 'sine';
-    o2.frequency.value = f * Math.pow(2, 1.1 / 1200);   /* a hair sharp, so it beats */
-    var lpk = ctx.createBiquadFilter(); lpk.type = 'lowpass';
-    lpk.frequency.value = f * 4.5; lpk.Q.value = 0.7;
+    /* one sine and nothing else. two of anything, however close, beats against
+       itself, and eight of those beating at once is a wash rather than a chord */
+    var o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
     var g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(last ? 0.115 : 0.075, t + 0.55);
@@ -682,14 +680,10 @@ var audio = (function () {
       var fr = TINN * Math.pow(2, ROOTNOTE / 1200);
       o.frequency.setValueAtTime(f, t + 0.9);
       o.frequency.exponentialRampToValueAtTime(fr, t + 5.0);
-      o2.frequency.setValueAtTime(f * Math.pow(2, 1.1 / 1200), t + 0.9);
-      o2.frequency.exponentialRampToValueAtTime(fr * Math.pow(2, 1.1 / 1200), t + 5.0);
-      lpk.frequency.setValueAtTime(f * 4.5, t + 0.9);
-      lpk.frequency.exponentialRampToValueAtTime(fr * 7.0, t + 5.0);
     }
-    o.connect(lpk); o2.connect(lpk); lpk.connect(g); g.connect(ctx.destination);
-    o.start(t); o2.start(t);
-    chord.push({ o: o, o2: o2, g: g });
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t);
+    chord.push({ o: o, g: g });
   }
 
   return { start: start, resume: resume, update: update,
@@ -772,7 +766,7 @@ function space(dt) {
     var w = Math.min(1, endT / WHITEOUT);
     /* it goes off, rather than fading up: nearly all of it in the first third */
     white = 1 - Math.pow(1 - w, 3.2);
-    if (endT >= WHITEOUT + 0.10) { web.enter(); return; }
+    if (endT >= WHITEOUT + 0.10) { web.enter(hole.x, hole.y); return; }
   }
 
   for (var i = 0; i < COUNT; i++) {
@@ -955,7 +949,7 @@ var web = (function () {
   var cv = document.getElementById('w');
   var g = cv.getContext('2d');
 
-  var WALK = 0, TIE = 1, HAUL = 2;
+  var WALK = 0, TIE = 1, HAUL = 2, DROP = 3, SWING = 4;
   var NEEDED = 8, MOTES = 18;
   var TWO = Math.PI * 2;
 
@@ -974,12 +968,24 @@ var web = (function () {
   var grab = -1, ptr = { x:0, y:0, down:false, id:null };
   var t = 0, blackT = -1, U = 1, taut = 0;
 
+  /* the first seconds of the white: everything is blown out and the specks are
+     still going where the explosion put them */
+  var enterT = 0, ink = 1;
+
+  /* she comes down out of the ceiling on a thread, in three goes */
+  var drop = { line:0, stops:[], at:0, hold:0 };
+
+  /* and when the next speck is a long way off she goes for it on a wire */
+  var swing = { ax:0, ay:0, r:0, a0:0, a1:0, q:0, dur:0, cool:0 };
+  var tuck = 0;                          /* legs pulled in, off the ground */
+
   function rand(a, b) { return a + Math.random() * (b - a); }
 
   function footIdeal(L, out) {
     /* never quite still: even stopped, the feet fidget a little */
     var an = spider.a + L.s * REST[L.k] + Math.sin(t * 1.1 + L.w * 5.1) * 0.045;
-    var re = (REACH[L.k] + Math.sin(t * 0.9 + L.w * 3.7) * 0.5) * U;
+    /* hanging or swinging, they are pulled in under her */
+    var re = (REACH[L.k] * (1 - 0.48 * tuck) + Math.sin(t * 0.9 + L.w * 3.7) * 0.5) * U;
     out[0] = spider.x + Math.cos(an) * re;
     out[1] = spider.y + Math.sin(an) * re;
   }
@@ -997,6 +1003,7 @@ var web = (function () {
      pair, so there is always something under her */
   function walkLegs(dt) {
     var lifted = 0, i, L;
+    if (tuck > 0.4) { plantFeet(); return; }   /* nothing to walk on up there */
     for (i = 0; i < legs.length; i++) if (legs[i].up > 0) lifted++;
     for (i = 0; i < legs.length; i++) {
       L = legs[i];
@@ -1031,6 +1038,16 @@ var web = (function () {
     return best;
   }
 
+  function farthestFree(x, y) {
+    var best = -1, bd = -1;
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i]; if (m.tied) continue;
+      var dx = m.x - x, dy = m.y - y, d = dx*dx + dy*dy;
+      if (d > bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
   function nearestTied(skip) {
     var s = motes[skip], best = -1, bd = 1e12;
     for (var i = 0; i < motes.length; i++) {
@@ -1041,21 +1058,35 @@ var web = (function () {
     return best;
   }
 
-  function enter() {
+  function enter(hx, hy) {
     phase = WEB;
     canvas.style.display = 'none';
     cv.style.display = 'block';
     layout();
     motes.length = 0; strands.length = 0;
     tied = 0; t = 0; blackT = -1; taut = 0; grab = -1; ptr.down = false;
-    var m = 70 * U;
-    for (var i = 0; i < MOTES; i++)
-      motes.push({ x:rand(m, W - m), y:rand(m, H - m), vx:rand(-8,8), vy:rand(-8,8),
+    enterT = 0; ink = 0; tuck = 1; swing.cool = 6;
+
+    /* the specks come out of wherever the hole was standing, still carrying
+       the explosion. they are thrown, and they take a few seconds to give up */
+    var ex = hx * W, ey = (1 - hy) * H;
+    var m = 40 * U;
+    for (var i = 0; i < MOTES; i++) {
+      var x = rand(m, W - m), y = rand(m, H - m);
+      var dx = x - ex, dy = y - ey, d = Math.sqrt(dx*dx + dy*dy) || 1;
+      var sp = rand(260, 820) * U;
+      motes.push({ x:x, y:y, vx:dx / d * sp, vy:dy / d * sp,
                    s:rand(0, 900), r:rand(1.9, 3.4), tied:false, dark:0 });
-    spider.x = rand(W * 0.3, W * 0.7);
-    spider.y = rand(H * 0.3, H * 0.7);
-    spider.a = rand(0, TWO); spider.step = 0;
-    spider.state = WALK; spider.hold = 0; spider.prey = -1;
+    }
+
+    /* and she is not there yet. she comes down out of the ceiling on a thread,
+       three drops with a stop in each, and lets go at the bottom */
+    spider.x = rand(W * 0.25, W * 0.75);
+    spider.y = -18 * U;
+    spider.a = Math.PI / 2; spider.step = 0;
+    spider.state = DROP; spider.hold = 0; spider.prey = -1;
+    drop.line = 0; drop.at = 0; drop.hold = 0.55;
+    drop.stops = [H * rand(0.20, 0.28), H * rand(0.42, 0.50), H * rand(0.58, 0.70)];
     plantFeet();
   }
 
@@ -1085,6 +1116,9 @@ var web = (function () {
       }
       curl(m.x / (90 * U) + m.s, m.y / (90 * U) + t * 0.06, c2);
       m.vx += c2[0] * 34 * dt; m.vy += c2[1] * 34 * dt;
+      /* standing columns of air, a few of them across the page, some going up
+         and some coming down. nothing to see; you only see what they carry */
+      m.vy += Math.sin(m.x / (150 * U) * Math.PI + t * 0.05) * 26 * U * dt;
 
       if (grab === i) {
         m.vx += (ptr.x - m.x) * 26 * dt;
@@ -1111,6 +1145,74 @@ var web = (function () {
     }
   }
 
+  /* ---- the way in. she is lowered, stops dead, is lowered again. the thread
+         she came down runs back up out of the top of the page until she lets
+         go of it at the bottom */
+  function rappel(dt) {
+    tuck = Math.min(1, tuck + dt * 3);        /* legs up while she is hanging */
+    if (drop.hold > 0) {
+      drop.hold -= dt;
+      /* she turns a little on the thread when she is not moving */
+      spider.a = Math.PI / 2 + Math.sin(t * 1.4 + drop.at) * 0.22;
+      spider.step += dt * 0.7;
+      if (drop.hold <= 0 && drop.at >= drop.stops.length) {
+        spider.state = WALK; tuck = 0; drop.line = 0;
+        spider.a = rand(0, TWO);
+        plantFeet();
+      }
+      return;
+    }
+    var to = drop.stops[drop.at];
+    spider.y += 620 * U * dt;
+    drop.line = 1;
+    if (spider.y >= to) {
+      spider.y = to; drop.at++;
+      drop.hold = (drop.at >= drop.stops.length) ? 0.5 : rand(0.26, 0.40);
+    }
+  }
+
+  /* ---- and the wire. a speck a long way off is not worth walking to: she
+         throws a thread up and over and swings the distance in one go */
+  function trySwing(m, d) {
+    if (d < 130 * U) return false;
+    /* the anchor sits square above the middle of the gap, the same distance
+       from her as from the speck, so the arc starts under her feet and ends
+       under the speck and she is standing on it when she lands */
+    var mx = (spider.x + m.x) * 0.5, my = (spider.y + m.y) * 0.5;
+    var nx = -(m.y - spider.y) / d, ny = (m.x - spider.x) / d;
+    if (ny > 0) { nx = -nx; ny = -ny; }            /* whichever way is up */
+    var h = d * rand(0.55, 0.85);
+    swing.ax = mx + nx * h; swing.ay = my + ny * h;
+    var dx = spider.x - swing.ax, dy = spider.y - swing.ay;
+    swing.r = Math.sqrt(dx*dx + dy*dy) || 1;
+    swing.a0 = Math.atan2(dy, dx);
+    var a1 = Math.atan2(m.y - swing.ay, m.x - swing.ax);
+    swing.a1 = swing.a0 + Math.atan2(Math.sin(a1 - swing.a0), Math.cos(a1 - swing.a0));
+    swing.q = 0; swing.dur = 0.55 + d / (900 * U);
+    spider.state = SWING;
+    return true;
+  }
+
+  function swinging(dt) {
+    tuck = Math.min(1, tuck + dt * 4);
+    swing.q += dt / swing.dur;
+    if (swing.q >= 1) {
+      /* one crossing, then she is on foot again until the next knot is tied */
+      spider.state = WALK; tuck = 0; swing.cool = 1e9;
+      plantFeet();
+      return;
+    }
+    /* a pendulum: slow off the top, quickest through the bottom of the arc */
+    var e = 0.5 - 0.5 * Math.cos(Math.PI * swing.q);
+    var a = swing.a0 + (swing.a1 - swing.a0) * e;
+    var r = swing.r * (1 - 0.10 * Math.sin(Math.PI * swing.q));
+    var mg = 12 * U;                    /* the arc may not take her off the page */
+    spider.x = Math.max(mg, Math.min(W - mg, swing.ax + Math.cos(a) * r));
+    spider.y = Math.max(mg, Math.min(H - mg, swing.ay + Math.sin(a) * r));
+    spider.a = a + (swing.a1 > swing.a0 ? Math.PI / 2 : -Math.PI / 2);
+    spider.step += dt * 3;
+  }
+
   /* ---- she goes for whichever speck is nearest, and never in a straight line */
   function hunt(dt) {
     if (spider.state === TIE) {
@@ -1124,6 +1226,21 @@ var web = (function () {
       }
       return;
     }
+    /* every so often she does not take the nearest one. she picks the speck
+       furthest off, throws a thread up over the middle of the gap, and crosses
+       it on the wire rather than walking it */
+    swing.cool -= dt;
+    if (swing.cool <= 0) {
+      var far = farthestFree(spider.x, spider.y);
+      if (far >= 0) {
+        var fm = motes[far];
+        var fx = fm.x - spider.x, fy = fm.y - spider.y;
+        var fd = Math.sqrt(fx*fx + fy*fy);
+        if (fd > 150 * U) { spider.prey = far; if (trySwing(fm, fd)) return; }
+      }
+      swing.cool = 1.5;                   /* nothing far enough; look again soon */
+    }
+
     if (spider.prey < 0 || motes[spider.prey].tied)
       spider.prey = nearestFree(spider.x, spider.y);
     if (spider.prey < 0) return;
@@ -1132,6 +1249,7 @@ var web = (function () {
     var dx = m.x - spider.x, dy = m.y - spider.y;
     var d = Math.sqrt(dx*dx + dy*dy) || 1;
     if (d < 15 * U) { spider.state = TIE; spider.hold = 1.15; return; }
+    tuck = Math.max(0, tuck - dt * 4);
 
     /* she does not walk straight at it, but the wander goes out of her the
        nearer she gets, and she slows and turns tighter for the last of it —
@@ -1140,7 +1258,7 @@ var web = (function () {
     var want = Math.atan2(dy, dx) + Math.sin(t * 1.6 + spider.s) * 0.30 * close;
     var da = Math.atan2(Math.sin(want - spider.a), Math.cos(want - spider.a));
     spider.a += da * Math.min(1, dt * 4.0);
-    var sp = 40 * U * (0.30 + 0.70 * close);
+    var sp = 56 * U * (0.30 + 0.70 * close);
     spider.x += Math.cos(spider.a) * sp * dt;
     spider.y += Math.sin(spider.a) * sp * dt;
     var mg = 14 * U;                    /* she does not walk off the page */
@@ -1156,6 +1274,7 @@ var web = (function () {
     var j = nearestTied(i);
     if (j >= 0) strands.push({ a:i, b:j, s:rand(0, 900) });
     tied++;
+    swing.cool = rand(3, 8);            /* she may take the wire again now */
     audio.knot(tied);
     if (tied >= NEEDED) { spider.state = HAUL; spider.prey = -1; }
   }
@@ -1254,34 +1373,39 @@ var web = (function () {
   /* a speck is not a dot. it is out of focus: the edge is the darkest part of
      it and the middle is nearly clear, with a highlight sitting off-centre, and
      the outline of the whole thing breathes so it is never quite a circle */
-  var RIM = 16;
+  /* a speck has no edge. it is a little of the light being held up, seen well
+     out of focus: nearly clear through the middle, thickest a good way out,
+     and blurred into the page from there. drawn twice, a wide soft one under a
+     tighter one, with a real blur under both of them. */
   function drawMotes() {
+    g.save();
     for (var i = 0; i < motes.length; i++) {
       var m = motes[i];
       var d = m.dark;
-      var R = m.r * U * (1.85 - 0.30 * d);
-      var gr = g.createRadialGradient(m.x - R * 0.24, m.y - R * 0.28, R * 0.04,
-                                      m.x, m.y, R);
-      gr.addColorStop(0.00, 'rgba(0,0,0,' + (0.05 + 0.25 * d).toFixed(3) + ')');
-      gr.addColorStop(0.42, 'rgba(0,0,0,' + (0.17 + 0.48 * d).toFixed(3) + ')');
-      gr.addColorStop(0.84, 'rgba(0,0,0,' + (0.29 + 0.64 * d).toFixed(3) + ')');
-      gr.addColorStop(1.00, 'rgba(0,0,0,0)');
-      g.fillStyle = gr;
-      g.beginPath();
-      for (var q = 0; q < RIM; q++) {
-        var an = q / RIM * TWO;
-        var rr = R * (1 + 0.10 * Math.sin(an * 3 + t * 0.7 + m.s) +
-                          0.06 * Math.sin(an * 5 - t * 0.45 + m.s * 1.7));
-        var x = m.x + Math.cos(an) * rr, y = m.y + Math.sin(an) * rr;
-        if (q === 0) g.moveTo(x, y); else g.lineTo(x, y);
-      }
-      g.closePath(); g.fill();
-      if (d > 0.05) {                       /* a knot has a little halo to it */
-        g.strokeStyle = 'rgba(0,0,0,' + (0.13 * d).toFixed(3) + ')';
-        g.lineWidth = 0.8 * U;
-        g.beginPath(); g.arc(m.x, m.y, R + 2.4 * U, 0, TWO); g.stroke();
-      }
+      var R = m.r * U * (2.5 - 0.35 * d);
+      var hx = m.x - R * 0.22, hy = m.y - R * 0.26;   /* the light is up there */
+
+      g.shadowColor = 'rgba(0,0,0,' + (0.05 + 0.16 * d).toFixed(3) + ')';
+      g.shadowBlur = R * (1.5 - 0.45 * d);
+
+      /* the halo it sits in */
+      var go = g.createRadialGradient(hx, hy, R * 0.05, m.x, m.y, R * 1.55);
+      go.addColorStop(0.00, 'rgba(0,0,0,0)');
+      go.addColorStop(0.55, 'rgba(0,0,0,' + (0.030 + 0.075 * d).toFixed(3) + ')');
+      go.addColorStop(1.00, 'rgba(0,0,0,0)');
+      g.fillStyle = go;
+      g.beginPath(); g.arc(m.x, m.y, R * 1.55, 0, TWO); g.fill();
+
+      /* and the body of it */
+      var gi = g.createRadialGradient(hx, hy, R * 0.04, m.x, m.y, R);
+      gi.addColorStop(0.00, 'rgba(0,0,0,' + (0.030 + 0.150 * d).toFixed(3) + ')');
+      gi.addColorStop(0.45, 'rgba(0,0,0,' + (0.140 + 0.420 * d).toFixed(3) + ')');
+      gi.addColorStop(0.74, 'rgba(0,0,0,' + (0.185 + 0.500 * d).toFixed(3) + ')');
+      gi.addColorStop(1.00, 'rgba(0,0,0,0)');
+      g.fillStyle = gi;
+      g.beginPath(); g.arc(m.x, m.y, R, 0, TWO); g.fill();
     }
+    g.restore();
   }
 
   /* two bones to a leg, and the knee is wherever it has to be to reach the
@@ -1290,6 +1414,14 @@ var web = (function () {
     var cx = spider.x, cy = spider.y, a = spider.a;
     var ca = Math.cos(a), sa = Math.sin(a);
     g.lineCap = 'round';
+    /* whatever she is hanging off: the ceiling, or the anchor of the swing */
+    if (drop.line > 0 || spider.state === SWING) {
+      var ax = spider.state === SWING ? swing.ax : cx;
+      var ay = spider.state === SWING ? swing.ay : -20 * U;
+      g.strokeStyle = 'rgba(0,0,0,0.30)';
+      g.lineWidth = 0.8 * U;
+      g.beginPath(); g.moveTo(ax, ay); g.lineTo(cx, cy); g.stroke();
+    }
     for (var i = 0; i < legs.length; i++) {
       var L = legs[i];
       var hip = a + L.s * REST[L.k] * 0.45;
@@ -1318,14 +1450,25 @@ var web = (function () {
   }
 
   function step(dt) {
-    t += dt;
+    t += dt; enterT += dt;
+    /* it comes out of the explosion blown right out, and everything in it
+       darkens back in over the first few seconds */
+    var q = Math.min(1, enterT / 3.2);
+    ink = 0.04 + 0.96 * q * q;
+
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.fillStyle = '#fff';
     g.fillRect(0, 0, W, H);
     drift(dt);
-    if (spider.state === HAUL) haul(dt); else hunt(dt);
+    if (spider.state === DROP)       rappel(dt);
+    else if (spider.state === SWING) swinging(dt);
+    else if (spider.state === HAUL)  haul(dt);
+    else                             hunt(dt);
     walkLegs(dt);
+
+    g.globalAlpha = ink;
     drawWeb(); drawMotes(); drawSpider();
+    g.globalAlpha = 1;
     if (blackT >= 0) closing(dt);
   }
 
