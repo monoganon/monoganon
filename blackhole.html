@@ -256,7 +256,8 @@ function curl(x, y, out) {
   out[1] = -(noise2(x + EPS, y) - noise2(x - EPS, y)) / (2*EPS);
 }
 
-/* screen wraps, so always take the shortest way round */
+/* the hand can be picked up on one side of the page and put down on the other;
+   this keeps that from reading as a throw */
 function wrap(d) { return d - Math.round(d); }
 
 /* ------------------------------------------------------------------ bodies
@@ -363,14 +364,14 @@ var dragging = false, spin = 1;
 var captureFlash = 0, consuming = 0, flare = 0;
 var bangT = 0, bangFlash = 0;
 
-/* crossing an edge knocks the drone onto the next step of the ladder */
+/* off a wall, the drone goes up onto the next step of the ladder */
 var STEPS = [0, 0.5, -0.5, 1, -1, 1.5];
-var stepAt = 0, jump = 1;
+var stepAt = 0, jump = 1, bounced = false;
 
 function capture(i, x, y) {
   state[i] = CAUGHT;
   px[i] = x; py[i] = y;
-  var dx = wrap(x - hole.x) * (W / H), dy = wrap(y - hole.y);
+  var dx = (x - hole.x) * (W / H), dy = y - hole.y;
   var r = Math.sqrt(dx*dx + dy*dy) || 1e-4;
   var orbit = Math.sqrt(GRAV / (r + 0.01 * S)) * (0.92 + Math.random() * 0.16);
   vx[i] = -dy / r * orbit / (W/H) + (Math.random()-0.5) * 0.0002 * S;
@@ -410,7 +411,7 @@ canvas.addEventListener('pointerdown', function (e) {
   pointer(e);
   if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
   flare += 0.45;                       /* a little pulse of appetite */
-  audio.start();
+  audio.start(); audio.resume();
 });
 canvas.addEventListener('pointermove', function (e) {
   if (dragging && e.pointerId === ptrId) pointer(e);
@@ -462,6 +463,10 @@ var audio = (function () {
     if (!AC) return;
     started = true;
     ctx = new AC();
+    /* made inside a gesture and still born asleep, on a good few phones. it has
+       to be woken by hand, and woken again on every touch after that, or the
+       clock never starts and nothing that was scheduled ever plays */
+    resume();
 
     master = ctx.createGain(); master.gain.value = 0;
     pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
@@ -504,7 +509,15 @@ var audio = (function () {
     src.connect(bp); bp.connect(noiseGain); noiseGain.connect(master);
     src.start();
 
-    master.gain.linearRampToValueAtTime(0.9, ctx.currentTime + 8);
+    master.gain.setValueAtTime(0.0001, ctx.currentTime);
+    master.gain.linearRampToValueAtTime(0.9, ctx.currentTime + 5);
+  }
+
+  function resume() {
+    if (ctx && ctx.state === 'suspended' && ctx.resume) {
+      var r = ctx.resume();
+      if (r && r.catch) r.catch(function () {});
+    }
   }
 
   function update(hx, hy, eat, bending, jump, grown) {
@@ -679,10 +692,13 @@ var audio = (function () {
     chord.push({ o: o, o2: o2, g: g });
   }
 
-  return { start: start, update: update, blast: blast, wake: wake, knot: knot };
+  return { start: start, resume: resume, update: update,
+           blast: blast, wake: wake, knot: knot };
 })();
 
-document.addEventListener('keydown', function (e) { if (e.key === ' ') audio.start(); });
+document.addEventListener('keydown', function (e) {
+  if (e.key === ' ') { audio.start(); audio.resume(); }
+});
 
 /* ------------------------------------------------------------------- loop */
 
@@ -709,34 +725,32 @@ function space(dt) {
 
   var aspect = W / H;
   var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
-  /* past a certain size it is penned in. let it off the edge and it comes back
-     in the other side, and for those few frames the lens is reaching across a
-     seam that does not exist */
-  var penned = R_LENS > halfDiag * 0.26;
 
   if (dragging) {
-    hole.vx = hole.vx * 0.965 + wrap(target.x - hole.x) * 0.0016;
-    hole.vy = hole.vy * 0.965 + wrap(target.y - hole.y) * 0.0016;
+    hole.vx = hole.vx * 0.965 + (target.x - hole.x) * 0.0016;
+    hole.vy = hole.vy * 0.965 + (target.y - hole.y) * 0.0016;
   } else {
     hole.vx *= 0.994; hole.vy *= 0.994;
   }
   hole.x += hole.vx; hole.y += hole.vy;
-  if (penned) {
-    /* it can still be shoved about, but not off the page. the bigger it is the
-       further in the wall stands, so the shadow never sits half over an edge */
-    var mgx = Math.min(0.45, 0.03 + R_SHADOW * 1.5 / aspect);
-    var mgy = Math.min(0.45, 0.03 + R_SHADOW * 1.5);
-    if (hole.x < mgx)     { hole.x = mgx;     hole.vx *= -0.25; }
-    if (hole.x > 1 - mgx) { hole.x = 1 - mgx; hole.vx *= -0.25; }
-    if (hole.y < mgy)     { hole.y = mgy;     hole.vy *= -0.25; }
-    if (hole.y > 1 - mgy) { hole.y = 1 - mgy; hole.vy *= -0.25; }
-  } else if (hole.x < 0 || hole.x >= 1 || hole.y < 0 || hole.y >= 1) {
-    /* while it is small it is thrown off one side and comes back in the other,
-       and crossing knocks the drone onto the next step of the ladder */
+  /* it stays on the page. nothing wraps any more, so being thrown off one side
+     and reappearing on the other is a hard cut now rather than the seamless
+     thing it used to be. it is thrown at the wall instead, and bounces; the
+     bigger it is the further in the wall stands, so the shadow is never half
+     over an edge. a bounce knocks the drone onto the next step of the ladder,
+     the way crossing an edge used to. */
+  var mgx = Math.min(0.45, 0.02 + R_SHADOW * 1.5 / aspect);
+  var mgy = Math.min(0.45, 0.02 + R_SHADOW * 1.5);
+  var hit = false;
+  if (hole.x < mgx)     { hole.x = mgx;     hole.vx = Math.abs(hole.vx) * 0.55; hit = true; }
+  if (hole.x > 1 - mgx) { hole.x = 1 - mgx; hole.vx = -Math.abs(hole.vx) * 0.55; hit = true; }
+  if (hole.y < mgy)     { hole.y = mgy;     hole.vy = Math.abs(hole.vy) * 0.55; hit = true; }
+  if (hole.y > 1 - mgy) { hole.y = 1 - mgy; hole.vy = -Math.abs(hole.vy) * 0.55; hit = true; }
+  if (hit && !bounced) {
     stepAt = (stepAt + 1) % STEPS.length;
     jump = Math.pow(2, STEPS[stepAt] / 12);
-    hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
   }
+  bounced = hit;
 
   bangT = Math.max(0, bangT - dt);
   bangFlash = Math.max(0, bangFlash - dt * 1.4);
@@ -791,14 +805,14 @@ function space(dt) {
       }
 
       if (wz < CAPTURE_Z) {
-        var ddx = wrap(x - hole.x) * aspect, ddy = wrap(y - hole.y);
+        var ddx = (x - hole.x) * aspect, ddy = y - hole.y;
         if (ddx*ddx + ddy*ddy < CAPTURE*CAPTURE) { capture(i, x, y); continue; }
       }
 
       lum = mag[i] * Math.min(1, iz * 0.72) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
       size = (role[i] === SUN ? 2.6 : role[i] === PLANET ? 0.9 : 1.15) * (0.75 + iz * 0.5) * DPR;
     } else {
-      var dx = wrap(hole.x - px[i]) * aspect, dy = wrap(hole.y - py[i]);
+      var dx = (hole.x - px[i]) * aspect, dy = hole.y - py[i];
       var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
       var ux = dx / r, uy = dy / r;
 
@@ -813,10 +827,9 @@ function space(dt) {
       px[i] += vx[i]; py[i] += vy[i];
       /* debris thrown clear of the page does not come round the other side:
          it is a star again, and a long way off */
-      if (bangT > 0 && (px[i] < 0 || px[i] >= 1 || py[i] < 0 || py[i] >= 1)) {
-        rebirth(i, true); continue;      /* the same test the wrap below makes */
+      if (px[i] < 0 || px[i] >= 1 || py[i] < 0 || py[i] >= 1) {
+        rebirth(i, true); continue;
       }
-      px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
 
       if (r < R_SHADOW * 0.85) {
         captureFlash = Math.min(captureFlash + (role[i] === SUN ? 2.2 : 0.5), 40);
@@ -921,9 +934,8 @@ function bang(nx, ny) {
     /* on a small ball around it, never on it: anything sitting exactly on the
        shadow is eaten on the first frame and comes back as a far-off star */
     var r0 = 0.004 + Math.random() * 0.013;
-    px[i] = nx + Math.cos(a) * r0 / asp;
-    py[i] = ny + Math.sin(a) * r0;
-    px[i] -= Math.floor(px[i]); py[i] -= Math.floor(py[i]);
+    px[i] = Math.min(0.999, Math.max(0.001, nx + Math.cos(a) * r0 / asp));
+    py[i] = Math.min(0.999, Math.max(0.001, ny + Math.sin(a) * r0));
     vx[i] = Math.cos(a) * sp / asp;
     vy[i] = Math.sin(a) * sp;
     mag[i] = 0.55 + Math.random() * 0.9;
@@ -1166,27 +1178,36 @@ var web = (function () {
       m.vx += dx / d * acc * dt; m.vy += dy / d * acc * dt;
       m.vx *= 0.99; m.vy *= 0.99;
       m.x += m.vx * dt; m.y += m.vy * dt;
-      /* measured after the step, or a fast one steps clean over the middle */
+      /* measured after the step, and against how far it went: by the end they
+         are moving fast enough to clear the middle in a single frame */
       var ex = spider.x - m.x, ey = spider.y - m.y;
-      if (ex*ex + ey*ey < 100 * U * U) { m.home = true; m.x = spider.x; m.y = spider.y; home++; }
+      var reach = 10 * U + Math.sqrt(m.vx*m.vx + m.vy*m.vy) * dt;
+      if (ex*ex + ey*ey < reach * reach) { m.home = true; m.x = spider.x; m.y = spider.y; home++; }
     }
     spider.step += dt * 1.6;
     if (home >= NEEDED && blackT < 0) blackT = 0;
   }
 
   /* ---- and the white is taken back the way the black was */
+  var HOLD = 0.34, GATHERED = 34;         /* how wide the held blot gets */
   function closing(dt) {
     blackT += dt;
-    var hold = 0.34;
-    if (blackT < hold) {                    /* everything she has, in one place */
-      var q = blackT / hold;
+    if (blackT < HOLD) {                    /* everything she has, in one place */
+      var q = blackT / HOLD;
       g.fillStyle = '#000';
-      g.beginPath(); g.arc(spider.x, spider.y, (4 + 30 * q * q) * U, 0, TWO); g.fill();
+      g.beginPath();
+      g.arc(spider.x, spider.y, (4 + (GATHERED - 4) * q * q) * U, 0, TWO);
+      g.fill();
       return;
     }
-    var k = Math.min(1, (blackT - hold) / 0.62);
-    var r = k * k * Math.sqrt(W*W + H*H) * 1.15;
-    var gr = g.createRadialGradient(spider.x, spider.y, Math.max(0.01, r * 0.7),
+    var k = Math.min(1, (blackT - HOLD) / 0.62);
+    /* it goes on out from where the blot got to. starting the front at nothing
+       shrank it back to a point first, so the whole thing went off twice */
+    var r = GATHERED * U + k * k * Math.sqrt(W*W + H*H) * 1.15;
+    /* the hard core of the front never falls behind where the blot got to, or
+       the solid middle of it steps backwards at the handover */
+    var inner = Math.min(r * 0.999, Math.max(r * 0.7, GATHERED * U));
+    var gr = g.createRadialGradient(spider.x, spider.y, inner,
                                     spider.x, spider.y, r);
     gr.addColorStop(0, 'rgba(0,0,0,1)');
     gr.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1315,7 +1336,7 @@ var web = (function () {
   cv.addEventListener('pointerdown', function (e) {
     if (ptr.id !== null) return;            /* one hand at a time in here too */
     ptr.id = e.pointerId;
-    audio.start(); at(e); ptr.down = true;
+    audio.start(); audio.resume(); at(e); ptr.down = true;
     if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
     grab = nearestFree(ptr.x, ptr.y, 110 * U);
   });
