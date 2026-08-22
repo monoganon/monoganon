@@ -312,7 +312,7 @@ function placeAnchor(i, deep) {
 function bornPlain(i, deep) {
   placeAnchor(i, deep);
   role[i] = PLAIN; lead[i] = i;
-  mag[i] = 0.24 + Math.random() * 0.70;
+  mag[i] = 0.46 + Math.random() * 1.05;
 }
 
 /* a constellation: one anchor and a handful of stars in a fixed figure */
@@ -320,7 +320,7 @@ function bornConstellation(c, deep) {
   var base = SYS_SLOTS + c * STARS_PER;
   placeAnchor(base, deep);
   role[base] = LEAD; lead[base] = base;
-  mag[base] = 0.48 + Math.random() * 0.5;
+  mag[base] = 0.82 + Math.random() * 0.75;
   ox[base] = 0; oy[base] = 0;
   var spread = 0.10 + Math.random() * 0.22;
   for (var k = 1; k < STARS_PER; k++) {
@@ -328,7 +328,7 @@ function bornConstellation(c, deep) {
     role[i] = MEMBER; lead[i] = base; state[i] = STAR;
     ox[i] = (Math.random()*2-1) * spread;
     oy[i] = (Math.random()*2-1) * spread;
-    mag[i] = 0.34 + Math.random() * 0.52;
+    mag[i] = 0.62 + Math.random() * 0.82;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -338,14 +338,14 @@ function bornSystem(s, deep) {
   var base = s * (1 + PLANETS_PER);
   placeAnchor(base, deep);
   role[base] = SUN; lead[base] = base;
-  mag[base] = 0.9 + Math.random() * 0.2;
+  mag[base] = 1.35 + Math.random() * 0.35;
   for (var k = 1; k <= PLANETS_PER; k++) {
     var i = base + k;
     role[i] = PLANET; lead[i] = base; state[i] = STAR;
     orbR[i] = 0.020 + k * 0.016 + Math.random() * 0.008;
     orbP[i] = Math.random() * Math.PI * 2;
     orbS[i] = (0.55 - k * 0.12) * (Math.random() < 0.5 ? 1 : -1);
-    mag[i] = 0.38 + Math.random() * 0.28;
+    mag[i] = 0.62 + Math.random() * 0.45;
     seed[i] = Math.random() * 1000;
   }
 }
@@ -364,7 +364,7 @@ var dragging = false, spin = 1;
 var captureFlash = 0, consuming = 0, flare = 0;
 var bangT = 0, bangFlash = 0;
 
-/* off a wall, the drone goes up onto the next step of the ladder */
+/* off a wall, or across an edge, the drone goes up onto the next step */
 var STEPS = [0, 0.5, -0.5, 1, -1, 1.5];
 var stepAt = 0, jump = 1, bounced = false;
 
@@ -719,6 +719,11 @@ function space(dt) {
 
   var aspect = W / H;
   var halfDiag = Math.sqrt(aspect*aspect + 1) * 0.5;
+  /* while it is a speck it can still be thrown off one side and come back in
+     the other: nothing wraps in the shaders any more, but at that size there
+     is nothing to see wrap. once it is big enough for the cut to show, it is
+     locked onto the page instead */
+  var penned = R_LENS > halfDiag * 0.09;
 
   if (dragging) {
     hole.vx = hole.vx * 0.965 + (target.x - hole.x) * 0.0016;
@@ -727,19 +732,21 @@ function space(dt) {
     hole.vx *= 0.994; hole.vy *= 0.994;
   }
   hole.x += hole.vx; hole.y += hole.vy;
-  /* it stays on the page. nothing wraps any more, so being thrown off one side
-     and reappearing on the other is a hard cut now rather than the seamless
-     thing it used to be. it is thrown at the wall instead, and bounces; the
-     bigger it is the further in the wall stands, so the shadow is never half
-     over an edge. a bounce knocks the drone onto the next step of the ladder,
-     the way crossing an edge used to. */
-  var mgx = Math.min(0.45, 0.02 + R_SHADOW * 1.5 / aspect);
-  var mgy = Math.min(0.45, 0.02 + R_SHADOW * 1.5);
   var hit = false;
-  if (hole.x < mgx)     { hole.x = mgx;     hole.vx = Math.abs(hole.vx) * 0.55; hit = true; }
-  if (hole.x > 1 - mgx) { hole.x = 1 - mgx; hole.vx = -Math.abs(hole.vx) * 0.55; hit = true; }
-  if (hole.y < mgy)     { hole.y = mgy;     hole.vy = Math.abs(hole.vy) * 0.55; hit = true; }
-  if (hole.y > 1 - mgy) { hole.y = 1 - mgy; hole.vy = -Math.abs(hole.vy) * 0.55; hit = true; }
+  if (penned) {
+    /* the wall stands further in the bigger it gets, so the shadow is never
+       half over an edge */
+    var mgx = Math.min(0.45, 0.02 + R_SHADOW * 1.5 / aspect);
+    var mgy = Math.min(0.45, 0.02 + R_SHADOW * 1.5);
+    if (hole.x < mgx)     { hole.x = mgx;     hole.vx = Math.abs(hole.vx) * 0.55; hit = true; }
+    if (hole.x > 1 - mgx) { hole.x = 1 - mgx; hole.vx = -Math.abs(hole.vx) * 0.55; hit = true; }
+    if (hole.y < mgy)     { hole.y = mgy;     hole.vy = Math.abs(hole.vy) * 0.55; hit = true; }
+    if (hole.y > 1 - mgy) { hole.y = 1 - mgy; hole.vy = -Math.abs(hole.vy) * 0.55; hit = true; }
+  } else if (hole.x < 0 || hole.x >= 1 || hole.y < 0 || hole.y >= 1) {
+    hole.x -= Math.floor(hole.x); hole.y -= Math.floor(hole.y);
+    hit = true;
+  }
+  /* off a wall, or across an edge, the drone goes up onto the next step */
   if (hit && !bounced) {
     stepAt = (stepAt + 1) % STEPS.length;
     jump = Math.pow(2, STEPS[stepAt] / 12);
@@ -803,8 +810,8 @@ function space(dt) {
         if (ddx*ddx + ddy*ddy < CAPTURE*CAPTURE) { capture(i, x, y); continue; }
       }
 
-      lum = mag[i] * Math.min(1, iz * 0.72) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
-      size = (role[i] === SUN ? 2.6 : role[i] === PLANET ? 0.9 : 1.15) * (0.75 + iz * 0.5) * DPR;
+      lum = mag[i] * Math.min(1.3, iz * 0.92) * (0.78 + 0.22 * Math.sin(time * 0.7 + seed[i]));
+      size = (role[i] === SUN ? 2.9 : role[i] === PLANET ? 1.05 : 1.32) * (0.75 + iz * 0.5) * DPR;
     } else {
       var dx = (hole.x - px[i]) * aspect, dy = hole.y - py[i];
       var r2 = dx*dx + dy*dy; r = Math.sqrt(r2) + 1e-5;
@@ -835,7 +842,7 @@ function space(dt) {
       x = px[i]; y = py[i];
       var sp = Math.abs(vx[i]) + Math.abs(vy[i]);
       var near = Math.min(1, R_LENS * 1.4 / r);
-      lum = Math.min(1.6, mag[i] * (0.5 + near * 1.5) * (1 + boost * 0.6) + sp * 120);
+      lum = Math.min(1.6, mag[i] * (0.34 + near * 1.0) * (1 + boost * 0.6) + sp * 120);
       size = (0.9 + near * 3.0) * DPR * (1 + boost * 1.2);
     }
 
@@ -976,7 +983,7 @@ var web = (function () {
   var drop = { line:0, stops:[], at:0, hold:0 };
 
   /* and when the next speck is a long way off she goes for it on a wire */
-  var swing = { ax:0, ay:0, r:0, a0:0, a1:0, q:0, dur:0, cool:0 };
+  var swing = { ax:0, ay:0, r:0, a0:0, a1:0, q:0, dur:0, cool:0, shot:0, shootDur:0 };
   var tuck = 0;                          /* legs pulled in, off the ground */
 
   function rand(a, b) { return a + Math.random() * (b - a); }
@@ -1085,7 +1092,7 @@ var web = (function () {
     spider.y = -18 * U;
     spider.a = Math.PI / 2; spider.step = 0;
     spider.state = DROP; spider.hold = 0; spider.prey = -1;
-    drop.line = 0; drop.at = 0; drop.hold = 0.55;
+    drop.line = 0; drop.at = 0; drop.hold = 0.9;
     drop.stops = [H * rand(0.20, 0.28), H * rand(0.42, 0.50), H * rand(0.58, 0.70)];
     plantFeet();
   }
@@ -1163,37 +1170,64 @@ var web = (function () {
       return;
     }
     var to = drop.stops[drop.at];
-    spider.y += 620 * U * dt;
+    spider.y += 190 * U * dt;
     drop.line = 1;
     if (spider.y >= to) {
       spider.y = to; drop.at++;
-      drop.hold = (drop.at >= drop.stops.length) ? 0.5 : rand(0.26, 0.40);
+      drop.hold = (drop.at >= drop.stops.length) ? 0.9 : rand(0.55, 0.85);
     }
   }
 
   /* ---- and the wire. a speck a long way off is not worth walking to: she
          throws a thread up and over and swings the distance in one go */
+  /* the whole arc has to fall on the page. she is not to be swung off it */
+  function arcFits(ax, ay, r, a0, a1) {
+    var mg = 13 * U;
+    for (var i = 0; i <= 10; i++) {
+      var a = a0 + (a1 - a0) * (i / 10);
+      var x = ax + Math.cos(a) * r, y = ay + Math.sin(a) * r;
+      if (x < mg || x > W - mg || y < mg || y > H - mg) return false;
+    }
+    return true;
+  }
+
+  var HEIGHTS = [0.80, 0.62, 0.46, 0.34, 0.24];
   function trySwing(m, d) {
     if (d < 130 * U) return false;
     /* the anchor sits square above the middle of the gap, the same distance
        from her as from the speck, so the arc starts under her feet and ends
-       under the speck and she is standing on it when she lands */
+       under the speck and she is standing on it when she lands. it is thrown
+       as high as will still keep the whole swing on the page. */
     var mx = (spider.x + m.x) * 0.5, my = (spider.y + m.y) * 0.5;
     var nx = -(m.y - spider.y) / d, ny = (m.x - spider.x) / d;
     if (ny > 0) { nx = -nx; ny = -ny; }            /* whichever way is up */
-    var h = d * rand(0.55, 0.85);
-    swing.ax = mx + nx * h; swing.ay = my + ny * h;
-    var dx = spider.x - swing.ax, dy = spider.y - swing.ay;
-    swing.r = Math.sqrt(dx*dx + dy*dy) || 1;
-    swing.a0 = Math.atan2(dy, dx);
-    var a1 = Math.atan2(m.y - swing.ay, m.x - swing.ax);
-    swing.a1 = swing.a0 + Math.atan2(Math.sin(a1 - swing.a0), Math.cos(a1 - swing.a0));
-    swing.q = 0; swing.dur = 0.55 + d / (900 * U);
-    spider.state = SWING;
-    return true;
+    for (var i = 0; i < HEIGHTS.length; i++) {
+      var h = d * HEIGHTS[i];
+      var ax = mx + nx * h, ay = my + ny * h;
+      var dx = spider.x - ax, dy = spider.y - ay;
+      var r = Math.sqrt(dx*dx + dy*dy) || 1;
+      var a0 = Math.atan2(dy, dx);
+      var t1 = Math.atan2(m.y - ay, m.x - ax);
+      var a1 = a0 + Math.atan2(Math.sin(t1 - a0), Math.cos(t1 - a0));
+      if (!arcFits(ax, ay, r, a0, a1)) continue;
+      swing.ax = ax; swing.ay = ay; swing.r = r; swing.a0 = a0; swing.a1 = a1;
+      swing.q = 0; swing.dur = 0.85 + d / (620 * U);
+      swing.shot = 0; swing.shootDur = 0.30 + d / (1900 * U);
+      spider.state = SWING;
+      return true;
+    }
+    return false;                       /* nowhere to hang it. she walks */
   }
 
   function swinging(dt) {
+    /* first the thread goes out, and hangs there slack while she takes hold of
+       it. only then does she step off */
+    if (swing.shot < 1) {
+      swing.shot = Math.min(1, swing.shot + dt / swing.shootDur);
+      spider.a = swing.a0 + Math.PI;    /* she is looking up the line */
+      spider.step += dt * 0.8;
+      return;
+    }
     tuck = Math.min(1, tuck + dt * 4);
     swing.q += dt / swing.dur;
     if (swing.q >= 1) {
@@ -1414,13 +1448,30 @@ var web = (function () {
     var cx = spider.x, cy = spider.y, a = spider.a;
     var ca = Math.cos(a), sa = Math.sin(a);
     g.lineCap = 'round';
-    /* whatever she is hanging off: the ceiling, or the anchor of the swing */
-    if (drop.line > 0 || spider.state === SWING) {
-      var ax = spider.state === SWING ? swing.ax : cx;
-      var ay = spider.state === SWING ? swing.ay : -20 * U;
+    /* the thread out of the ceiling, straight and holding her weight */
+    if (drop.line > 0) {
       g.strokeStyle = 'rgba(0,0,0,0.30)';
       g.lineWidth = 0.8 * U;
-      g.beginPath(); g.moveTo(ax, ay); g.lineTo(cx, cy); g.stroke();
+      g.beginPath(); g.moveTo(cx, -20 * U); g.lineTo(cx, cy); g.stroke();
+    }
+    /* and the wire. it flies out first, then hangs in a loop, and only pulls
+       straight as she comes through the bottom of the arc */
+    if (spider.state === SWING) {
+      var bx = swing.ax, by = swing.ay;
+      if (swing.shot < 1) {              /* still on its way over */
+        bx = cx + (swing.ax - cx) * swing.shot;
+        by = cy + (swing.ay - cy) * swing.shot;
+      }
+      var wx = bx - cx, wy = by - cy;
+      var wl = Math.sqrt(wx*wx + wy*wy) || 1;
+      var slack = swing.shot < 1 ? wl * 0.30 * swing.shot
+                                 : wl * 0.22 * (1 - Math.sin(Math.PI * swing.q));
+      g.strokeStyle = 'rgba(0,0,0,0.30)';
+      g.lineWidth = 0.8 * U;
+      g.beginPath(); g.moveTo(cx, cy);
+      g.quadraticCurveTo((cx + bx) * 0.5 + wy / wl * slack,
+                         (cy + by) * 0.5 - wx / wl * slack + slack * 0.6, bx, by);
+      g.stroke();
     }
     for (var i = 0; i < legs.length; i++) {
       var L = legs[i];
