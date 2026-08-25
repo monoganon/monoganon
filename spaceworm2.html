@@ -205,7 +205,10 @@ body {
   
   
   <script>
-let queuedDirection = null;
+// Direction of the last step the worm actually took, plus the turns waiting to
+// be taken. Inputs are validated against the queue rather than against the live
+// dx/dy, so two quick presses can no longer fold the worm back on itself.
+let directionQueue = [];
     
 const restartDelay = 1500; // Delay in milliseconds before the game can be restarted
 
@@ -237,6 +240,37 @@ let gameOverState = false; // Add this variable to keep track of the game state
 ];
     let dx = tileSize;
     let dy = 0;
+
+    const DIRECTIONS = {
+      up:    {x: 0, y: -tileSize},
+      down:  {x: 0, y: tileSize},
+      left:  {x: -tileSize, y: 0},
+      right: {x: tileSize, y: 0},
+      ArrowUp:    {x: 0, y: -tileSize},
+      ArrowDown:  {x: 0, y: tileSize},
+      ArrowLeft:  {x: -tileSize, y: 0},
+      ArrowRight: {x: tileSize, y: 0}
+    };
+
+    let direction = {x: tileSize, y: 0};
+
+    // Queue a turn, measured against the last turn already queued rather than
+    // the current heading: pressing up then right while travelling left is two
+    // legal turns, but right on its own is a reversal into the neck.
+    const queueDirection = (name) => {
+      const next = DIRECTIONS[name];
+      if (!next || directionQueue.length >= 2) return;
+
+      const previous = directionQueue.length
+        ? directionQueue[directionQueue.length - 1]
+        : direction;
+
+      const isReversal = next.x === -previous.x && next.y === -previous.y;
+      const isSame = next.x === previous.x && next.y === previous.y;
+      if (isReversal || isSame) return;
+
+      directionQueue.push(next);
+    };
 
     gameContainer.style.width = containerSize + 'px';
     gameContainer.style.height = containerSize + 'px';
@@ -440,21 +474,9 @@ const handleMouseUp = (event) => {
   const diffY = mouseStartY - mouseEndY;
 
   if (Math.abs(diffX) > Math.abs(diffY)) {
-    if (diffX > 0 && dx === 0) {
-      dx = -tileSize;
-      dy = 0;
-    } else if (diffX < 0 && dx === 0) {
-      dx = tileSize;
-      dy = 0;
-    }
+    queueDirection(diffX > 0 ? 'left' : 'right');
   } else {
-    if (diffY > 0 && dy === 0) {
-      dx = 0;
-      dy = -tileSize;
-    } else if (diffY < 0 && dy === 0) {
-      dx = 0;
-      dy = tileSize;
-    }
+    queueDirection(diffY > 0 ? 'up' : 'down');
   }
 };
 
@@ -484,21 +506,9 @@ const handleTouchEnd = (event) => {
   const diffY = touchStartY - touchEndY;
 
   if (Math.abs(diffX) > Math.abs(diffY)) {
-    if (diffX > 0 && dx === 0) {
-      dx = -tileSize;
-      dy = 0;
-    } else if (diffX < 0 && dx === 0) {
-      dx = tileSize;
-      dy = 0;
-    }
+    queueDirection(diffX > 0 ? 'left' : 'right');
   } else {
-    if (diffY > 0 && dy === 0) {
-      dx = 0;
-      dy = -tileSize;
-    } else if (diffY < 0 && dy === 0) {
-      dx = 0;
-      dy = tileSize;
-    }
+    queueDirection(diffY > 0 ? 'up' : 'down');
   }
 };
 
@@ -539,37 +549,14 @@ const updateCometPosition = () => {
 
 
 const moveSnake = () => {
+  // Apply at most one turn per step, and do it before the head moves so the
+  // turn lands on this step instead of the next one.
+  if (directionQueue.length) direction = directionQueue.shift();
+  dx = direction.x;
+  dy = direction.y;
+
   const headX = (snake[0].x + dx + containerSize) % containerSize;
   const headY = (snake[0].y + dy + containerSize) % containerSize;
-
-  if (queuedDirection) {
-    if (queuedDirection === 'ArrowUp' && dy === 0) {
-      dx = 0;
-      dy = -tileSize;
-    } else if (queuedDirection === 'ArrowDown' && dy === 0) {
-      dx = 0;
-      dy = tileSize;
-    } else if (queuedDirection === 'ArrowLeft' && dx === 0) {
-      dx = -tileSize;
-      dy = 0;
-    } else if (queuedDirection === 'ArrowRight' && dx === 0) {
-      dx = tileSize;
-      dy = 0;
-    } else if (queuedDirection === 'up' && dy === 0) {
-      dx = 0;
-      dy = -tileSize;
-    } else if (queuedDirection === 'down' && dy === 0) {
-      dx = 0;
-      dy = tileSize;
-    } else if (queuedDirection === 'left' && dx === 0) {
-      dx = -tileSize;
-      dy = 0;
-    } else if (queuedDirection === 'right' && dx === 0) {
-      dx = tileSize;
-      dy = 0;
-    }
-    queuedDirection = null;
-  }
 
   prevSnake = snake.map(part => ({x: part.x, y: part.y}));
 
@@ -592,8 +579,6 @@ const moveSnake = () => {
 
   snake[0].x = headX;
   snake[0].y = headY;
-
-  changingDirection = false;
 };
 
 // Fixed-timestep loop driven by requestAnimationFrame: steps land on a steady
@@ -747,8 +732,8 @@ const restart = () => {
 
   dx = tileSize;
   dy = 0;
-  queuedDirection = null;
-  changingDirection = false;
+  direction = {x: tileSize, y: 0};
+  directionQueue = [];
   updateCometPosition();
   resetWormTrail();
   startTime = new Date().getTime(); // Reset the start time
@@ -757,37 +742,18 @@ const restart = () => {
 };
 
 
-let changingDirection = false;
-
-
-
 document.addEventListener('keydown', function (event) {
   if (gameOverState) {
     setTimeout(restart, restartDelay);
     return;
   }
-  if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-  queuedDirection = event.key;
-}
 
-  if (changingDirection) return;
-  changingDirection = true;
-
-  if (event.key === 'ArrowUp' && dy === 0) {
-    dx = 0;
-    dy = -tileSize;
-  } else if (event.key === 'ArrowDown' && dy === 0) {
-    dx = 0;
-    dy = tileSize;
-  } else if (event.key === 'ArrowLeft' && dx === 0) {
-    dx = -tileSize;
-    dy = 0;
-  } else if (event.key === 'ArrowRight' && dx === 0) {
-    dx = tileSize;
-    dy = 0;
-  } else if (event.key === ' ') {
+  if (event.key === ' ') {
     restart();
+    return;
   }
+
+  queueDirection(event.key);
 });
 
 
@@ -803,27 +769,8 @@ if (isMobile) {
     return;
   }
 
-  //if (changingDirection) return;
-  //changingDirection = true;
   navigator.vibrate(20)
-  const direction = event.target.getAttribute('data-direction');
-
-  if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
-  queuedDirection = direction;
-}
-  if (direction === 'up' && dy === 0) {
-    dx = 0;
-    dy = -tileSize;
-  } else if (direction === 'down' && dy === 0) {
-    dx = 0;
-    dy = tileSize;
-  } else if (direction === 'left' && dx === 0) {
-    dx = -tileSize;
-    dy = 0;
-  } else if (direction === 'right' && dx === 0) {
-    dx = tileSize;
-    dy = 0;
-  }
+  queueDirection(event.target.getAttribute('data-direction'));
 };
 
 numpadButtons.forEach(button => {
