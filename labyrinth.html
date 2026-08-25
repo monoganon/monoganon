@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>The Hedges</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#070a10; overflow:hidden;
+               -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  canvas { position:fixed; left:0; top:0; display:block; width:100vw; height:100vh;
+           touch-action:none; cursor:default; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+(function () {
+'use strict';
+
+var cv = document.getElementById('c');
+var g = cv.getContext('2d');
+
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+var W = 1, H = 1;
+
+/* ------------------------------------------------------------------ the sky
+
+   everything is lit by two things and nothing else: a moon, which is cold and
+   everywhere and shows you the shape of the hedges but none of their detail,
+   and the torch in her hand, which is warm and reaches about three tiles.    */
+
+var MOON = [124, 152, 200];
+var TORCH = [255, 186, 112];
+var AMBIENT = 0.42;
+
+function mixed(base, lt, warm, out) {
+  /* base is the surface's own value, 0..1. lt is how much light reaches it,
+     and warm is how much of that light came from the torch rather than the
+     moon. the two are mixed before they are put on the surface. */
+  var r = MOON[0] + (TORCH[0] - MOON[0]) * warm;
+  var gg = MOON[1] + (TORCH[1] - MOON[1]) * warm;
+  var b = MOON[2] + (TORCH[2] - MOON[2]) * warm;
+  var k = base * lt;
+  out[0] = Math.min(255, r * k);
+  out[1] = Math.min(255, gg * k);
+  out[2] = Math.min(255, b * k);
+}
+
+var _c = [0, 0, 0];
+function col(base, lt, warm) {
+  mixed(base, lt, warm, _c);
+  return 'rgb(' + (_c[0] | 0) + ',' + (_c[1] | 0) + ',' + (_c[2] | 0) + ')';
+}
+
+/* ------------------------------------------------------------------- maze */
+
+var GW = 31, GH = 31;                    /* odd, so the walls close properly */
+var wall = new Uint8Array(GW * GH);
+function W_(x, y) {
+  if (x < 0 || y < 0 || x >= GW || y >= GH) return 1;
+  return wall[y * GW + x];
+}
+
+/* a hash per cell, so every hedge and every flagstone is its own shape and
+   stays that shape from one frame to the next */
+function hash(x, y, k) {
+  var h = (x * 374761393 + y * 668265263 + k * 2147483647) | 0;
+  h = (h ^ (h >> 13)) * 1274126177;
+  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+}
+
+function carve() {
+  var i;
+  for (i = 0; i < wall.length; i++) wall[i] = 1;
+  var stack = [[1, 1]];
+  wall[1 * GW + 1] = 0;
+  var DIRS = [[0,-2],[0,2],[-2,0],[2,0]];
+  while (stack.length) {
+    var cur = stack[stack.length - 1];
+    var opts = [];
+    for (i = 0; i < 4; i++) {
+      var nx = cur[0] + DIRS[i][0], ny = cur[1] + DIRS[i][1];
+      if (nx > 0 && ny > 0 && nx < GW - 1 && ny < GH - 1 && wall[ny * GW + nx]) opts.push(i);
+    }
+    if (!opts.length) { stack.pop(); continue; }
+    var d = DIRS[opts[(Math.random() * opts.length) | 0]];
+    var mx = cur[0] + d[0] / 2, my = cur[1] + d[1] / 2;
+    wall[my * GW + mx] = 0;
+    wall[(cur[1] + d[1]) * GW + (cur[0] + d[0])] = 0;
+    stack.push([cur[0] + d[0], cur[1] + d[1]]);
+  }
+  /* a handful of walls knocked through, so it is a garden and not a puzzle box:
+     there is more than one way round and it is pleasanter to wander */
+  for (i = 0; i < 40; i++) {
+    var x = 1 + ((Math.random() * (GW - 2)) | 0), y = 1 + ((Math.random() * (GH - 2)) | 0);
+    if (!wall[y * GW + x]) continue;
+    var open = (!W_(x-1,y)) + (!W_(x+1,y)) + (!W_(x,y-1)) + (!W_(x,y+1));
+    if (open === 2) wall[y * GW + x] = 0;
+  }
+}
+
+function deadEnds() {
+  var out = [];
+  for (var y = 1; y < GH - 1; y++)
+    for (var x = 1; x < GW - 1; x++) {
+      if (wall[y * GW + x]) continue;
+      var n = (!W_(x-1,y)) + (!W_(x+1,y)) + (!W_(x,y-1)) + (!W_(x,y+1));
+      if (n === 1) out.push([x, y]);
+    }
+  return out;
+}
+
+/* ------------------------------------------------------------- the puzzles
+
+   every round is one name. some statues have a letter cut into the plaque, and
+   reading one turns that letter over wherever it appears in the name. the rest
+   carry a line about them, or a little picture of something of theirs, and
+   those are for guessing on — the letters go in from the ring of the alphabet
+   that opens under the button.                                              */
+
+var ICONS = {
+  mic: [
+    "...#####...",
+    "..#######..",
+    "..#######..",
+    "..#######..",
+    "..#######..",
+    "...#####...",
+    "....###....",
+    "....###....",
+    "....###....",
+    "...#####...",
+    "...#####..."
+  ],
+  dress: [
+    "....###....",
+    "...#####...",
+    "...#####...",
+    "..#######..",
+    "..#######..",
+    ".#########.",
+    ".#########.",
+    "###########",
+    "###########",
+    "##.#####.##",
+    "#...###...#"
+  ],
+  bowler: [
+    "...........",
+    "....###....",
+    "...#####...",
+    "..#######..",
+    ".#########.",
+    "###########",
+    "...........",
+    "..##...##..",
+    ".####.####.",
+    "..#######..",
+    "....###...."
+  ],
+  bolt: [
+    ".......###.",
+    "......###..",
+    ".....###...",
+    "....###....",
+    "..#######..",
+    "...######..",
+    "......###..",
+    ".....###...",
+    "....###....",
+    "...###.....",
+    "..###......"
+  ],
+  cane: [
+    "......###..",
+    ".....#####.",
+    ".....##.##.",
+    ".....##....",
+    ".....##....",
+    ".....##....",
+    ".....##....",
+    ".....##....",
+    ".....##....",
+    "....####...",
+    "...######.."
+  ],
+  candle: [
+    "....##.....",
+    "...####....",
+    "....##.....",
+    "....##.....",
+    "...####....",
+    "..######...",
+    "..######...",
+    "..######...",
+    "..######...",
+    ".########..",
+    ".########.."
+  ]
+};
+
+var ROUNDS = [
+  { name: 'ELVIS',
+    plaques: [
+      { t:'letter', v:'E' },
+      { t:'letter', v:'V' },
+      { t:'icon',   v:'mic',    line:'HE HELD ONE OF THESE' },
+      { t:'hint',   v:'THE HOUSE WAS CALLED GRACELAND' },
+      { t:'hint',   v:'HIS SHOES WERE BLUE, AND SUEDE' },
+      { t:'letter', v:'S' }
+    ] },
+  { name: 'MONROE',
+    plaques: [
+      { t:'letter', v:'M' },
+      { t:'letter', v:'R' },
+      { t:'icon',   v:'dress',  line:'THE SUBWAY GRATE, AND THE WHITE OF IT' },
+      { t:'hint',   v:'NORMA JEANE, BEFORE THE LIGHTS' },
+      { t:'hint',   v:'SHE SANG HAPPY BIRTHDAY TO A PRESIDENT' },
+      { t:'letter', v:'E' }
+    ] },
+  { name: 'CHAPLIN',
+    plaques: [
+      { t:'letter', v:'C' },
+      { t:'letter', v:'P' },
+      { t:'icon',   v:'bowler', line:'THE HAT, AND WHAT GREW UNDER IT' },
+      { t:'icon',   v:'cane',   line:'HE LEANED ON IT, AND TWIRLED IT' },
+      { t:'hint',   v:'THEY CALLED HIM THE LITTLE TRAMP' },
+      { t:'letter', v:'N' }
+    ] },
+  { name: 'BOWIE',
+    plaques: [
+      { t:'letter', v:'B' },
+      { t:'letter', v:'W' },
+      { t:'icon',   v:'bolt',   line:'IT WAS PAINTED ACROSS HIS FACE' },
+      { t:'hint',   v:'THERE IS A STARMAN WAITING IN THE SKY' },
+      { t:'hint',   v:'ZIGGY PLAYED GUITAR, AND THEN HE DID NOT' },
+      { t:'letter', v:'E' }
+    ] },
+  { name: 'HOUDINI',
+    plaques: [
+      { t:'letter', v:'H' },
+      { t:'letter', v:'D' },
+      { t:'icon',   v:'candle', line:'THE SEANCES WENT ON WITHOUT HIM' },
+      { t:'hint',   v:'NO LOCK EVER HELD HIM FOR LONG' },
+      { t:'hint',   v:'HE HUNG UPSIDE DOWN IN A TANK OF WATER' },
+      { t:'letter', v:'N' }
+    ] }
+];
+
+var roundAt = 0;
+var answer = '', found = [], statues = [], wrong = [];
+var solved = false, solvedT = 0;
+
+/* ------------------------------------------------------------- her, walking */
+
+var her = { x: 1.5, y: 1.5, fx: 0, fy: 1, bob: 0, sway: 0 };
+var torch = { r: 3.5, flick: 1 };
+
+function startRound() {
+  carve();
+  var r = ROUNDS[roundAt % ROUNDS.length];
+  answer = r.name;
+  found = [];
+  for (var i = 0; i < answer.length; i++) found.push(false);
+  wrong = [];
+  solved = false; solvedT = 0;
+
+  /* she starts near the middle of the garden, so it is around her from the
+     first frame rather than off in one corner */
+  var bx = 1, by = 1, bd = 1e9, xx, yy;
+  for (yy = 1; yy < GH - 1; yy++)
+    for (xx = 1; xx < GW - 1; xx++) {
+      if (wall[yy * GW + xx]) continue;
+      var d2 = (xx - (GW - 1) / 2) * (xx - (GW - 1) / 2) +
+               (yy - (GH - 1) / 2) * (yy - (GH - 1) / 2);
+      if (d2 < bd) { bd = d2; bx = xx; by = yy; }
+    }
+  her.x = bx + 0.5; her.y = by + 0.5; her.fx = 0; her.fy = 1;
+  cam.x = her.x; cam.y = her.y;
+
+  /* the statues go in the dead ends, and none of them within sight of where
+     she is standing when the torch is lit */
+  var ends = deadEnds();
+  for (i = ends.length - 1; i > 0; i--) {
+    var j = (Math.random() * (i + 1)) | 0, t = ends[i]; ends[i] = ends[j]; ends[j] = t;
+  }
+  ends.sort(function (a, b) {
+    var da = Math.abs(a[0] - bx) + Math.abs(a[1] - by);
+    return (da < 7 ? 1 : 0) - (Math.abs(b[0] - bx) + Math.abs(b[1] - by) < 7 ? 1 : 0);
+  });
+  statues = [];
+  for (i = 0; i < r.plaques.length; i++) {
+    var cell = ends.pop() || [3 + i * 2, 3];
+    statues.push({ x: cell[0] + 0.5, y: cell[1] + 0.5, p: r.plaques[i], read: false, glow: 0 });
+  }
+  buildOrder();
+}
+
+function reveal(ch) {
+  var any = false;
+  for (var i = 0; i < answer.length; i++)
+    if (answer.charAt(i) === ch && !found[i]) { found[i] = true; any = true; }
+  if (any) {
+    var all = true;
+    for (i = 0; i < answer.length; i++) if (!found[i]) all = false;
+    if (all) { solved = true; solvedT = 0; sfx.solve(); } else sfx.right();
+  }
+  return any;
+}
+
+function guess(ch) {
+  for (var i = 0; i < answer.length; i++) if (answer.charAt(i) === ch && found[i]) return;
+  if (!reveal(ch)) {
+    if (wrong.indexOf(ch) < 0) wrong.push(ch);
+    torch.flick = 0.35;                 /* the wind gets in. it comes back */
+    shake = 6;
+    sfx.wrong();
+  }
+}
+
+/* --------------------------------------------------------------- the plumes
+
+   they are not in the maze, they are between you and it: a few slow bodies of
+   moonlit air crossing the page, thicker where the torch is under them.      */
+
+var plumes = [];
+function seedPlumes() {
+  plumes.length = 0;
+  for (var i = 0; i < 7; i++)
+    plumes.push({ x: Math.random() * 1.8 - 0.4, y: Math.random(),
+                  r: 0.15 + Math.random() * 0.22,
+                  vx: 0.010 + Math.random() * 0.020, vy: (Math.random() - 0.5) * 0.008,
+                  a: 0.030 + Math.random() * 0.040, s: Math.random() * 900 });
+}
+
+/* -------------------------------------------------------------- the camera */
+
+var cam = { x: 1.5, y: 1.5 };
+var TW = 78, TH = 39, HH = 52;           /* tile width, tile height, hedge height */
+var scale = 1, shake = 0;
+/* the world is measured in pixels; the interface is measured in this, which is
+   the device's own scale on a phone and rather more than it on a wide screen */
+var UI = 1;
+
+function iso(x, y, out) {
+  out[0] = (x - y) * TW * 0.5;
+  out[1] = (x + y) * TH * 0.5;
+}
+
+var _a = [0, 0], _b = [0, 0];
+function toScreen(x, y, out) {
+  iso(x, y, _a); iso(cam.x, cam.y, _b);
+  out[0] = W * 0.5 + (_a[0] - _b[0]) * scale;
+  out[1] = H * 0.46 + (_a[1] - _b[1]) * scale;
+}
+
+/* --------------------------------------------------------------- the light */
+
+function lightAt(x, y) {
+  var dx = x - her.x, dy = y - her.y;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  var r = torch.r * torch.flick;
+  var t = Math.max(0, 1 - d / r);
+  return t * t * 1.15;
+}
+
+/* how much of the moon is still getting through at that distance. near her the
+   hedges are hedges; three or four turns off they are only shapes; past that
+   the garden is a rumour. you can see into it, but never all of it. */
+function nightAt(x, y) {
+  var dx = x - her.x, dy = y - her.y;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  var f = 1 - (d - 4.5) / 8.5;
+  return 0.16 + 0.84 * Math.max(0, Math.min(1, f));
+}
+
+/* ---------------------------------------------------------------- drawing */
+
+var P = [0, 0], P2 = [0, 0];
+
+function drawFloor(x, y) {
+  toScreen(x + 0.5, y + 0.5, P);
+  var hw = TW * 0.5 * scale, hh = TH * 0.5 * scale;
+  if (P[0] < -hw * 2 || P[0] > W + hw * 2 || P[1] < -hh * 4 || P[1] > H + hh * 6) return;
+  var lt = lightAt(x + 0.5, y + 0.5);
+  var warm = Math.min(1, lt * 1.7);
+  var base = 0.15 + hash(x, y, 3) * 0.06;
+  g.fillStyle = col(base, AMBIENT * nightAt(x + 0.5, y + 0.5) + lt, warm);
+  g.beginPath();
+  g.moveTo(P[0], P[1] - hh);
+  g.lineTo(P[0] + hw, P[1]);
+  g.lineTo(P[0], P[1] + hh);
+  g.lineTo(P[0] - hw, P[1]);
+  g.closePath();
+  g.fill();
+  /* gravel, and only where the torch is on it */
+  if (lt > 0.08) {
+    g.fillStyle = col(0.34, AMBIENT * nightAt(x + 0.5, y + 0.5) + lt, warm);
+    for (var i = 0; i < 5; i++) {
+      var a = hash(x, y, 10 + i), b = hash(x, y, 20 + i);
+      var px = P[0] + (a - 0.5) * hw * 1.3;
+      var py = P[1] + (b - 0.5) * hh * 1.3;
+      g.fillRect(px, py, 1.4 * scale, 1.1 * scale);
+    }
+  }
+}
+
+function drawHedge(x, y) {
+  toScreen(x + 0.5, y + 0.5, P);
+  var hw = TW * 0.5 * scale, hh = TH * 0.5 * scale, hi = HH * scale;
+  if (P[0] < -hw * 3 || P[0] > W + hw * 3 || P[1] < -hi * 3 || P[1] > H + hi * 3) return;
+
+  var lt = lightAt(x + 0.5, y + 0.5);
+  var warm = Math.min(1, lt * 1.7);
+  var L = AMBIENT * nightAt(x + 0.5, y + 0.5) + lt;
+  var bump = hash(x, y, 1) * 0.16 + 0.92;      /* every hedge its own height */
+  var top = P[1] - hi * bump;
+
+  /* the two faces you can see. the left one takes what light there is, the
+     right one is the away side and is nearly out */
+  g.fillStyle = col(0.19, L, warm);
+  g.beginPath();
+  g.moveTo(P[0] - hw, P[1]); g.lineTo(P[0], P[1] + hh);
+  g.lineTo(P[0], top + hh); g.lineTo(P[0] - hw, top);
+  g.closePath(); g.fill();
+
+  g.fillStyle = col(0.105, L, warm);
+  g.beginPath();
+  g.moveTo(P[0] + hw, P[1]); g.lineTo(P[0], P[1] + hh);
+  g.lineTo(P[0], top + hh); g.lineTo(P[0] + hw, top);
+  g.closePath(); g.fill();
+
+  /* the top of it, where the moon actually lands */
+  g.fillStyle = col(0.44, L, warm * 0.7);
+  g.beginPath();
+  g.moveTo(P[0], top - hh);
+  g.lineTo(P[0] + hw, top);
+  g.lineTo(P[0], top + hh);
+  g.lineTo(P[0] - hw, top);
+  g.closePath(); g.fill();
+
+  /* leaves. only worth drawing where something is lighting them */
+  var n = L > 0.55 ? 12 : 7;
+  for (var i = 0; i < n; i++) {
+    var a = hash(x, y, 40 + i), b = hash(x, y, 70 + i), c2 = hash(x, y, 100 + i);
+    var lx = P[0] + (a - 0.5) * hw * 1.7;
+    var ly = top + (b - 0.5) * hh * 1.6;
+    var s2 = (1.6 + c2 * 2.4) * scale;
+    g.fillStyle = col(0.46 + c2 * 0.40, L, warm * 0.8);
+    g.beginPath();
+    g.ellipse(lx, ly, s2, s2 * 0.62, (a - 0.5) * 2, 0, Math.PI * 2);
+    g.fill();
+  }
+  /* and a few hanging down the lit face, so the wall has depth to it */
+  if (L > 0.58) {
+    for (i = 0; i < 5; i++) {
+      var d1 = hash(x, y, 130 + i), d2 = hash(x, y, 160 + i);
+      var fx = P[0] - hw * d1;
+      var fy = top + hh * d1 + (hi * bump) * d2 * 0.85;
+      g.fillStyle = col(0.20 + d2 * 0.18, L, warm * 0.8);
+      g.beginPath();
+      g.ellipse(fx, fy, 2.2 * scale, 1.5 * scale, 0.5, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+}
+
+function drawStatue(s) {
+  toScreen(s.x, s.y, P);
+  var hw = TW * 0.5 * scale, hh = TH * 0.5 * scale;
+  var cx = P[0], cy = P[1] + hh * 0.5;
+  var lt = lightAt(s.x, s.y);
+  var warm = Math.min(1, lt * 1.7);
+  var L = AMBIENT * nightAt(s.x, s.y) + lt + s.glow * 0.30;
+
+  /* the plinth */
+  var pw = hw * 0.44, ph = hh * 0.44, pz = 13 * scale;
+  g.fillStyle = col(0.14, L, warm);
+  g.beginPath();
+  g.moveTo(cx - pw, cy); g.lineTo(cx, cy + ph);
+  g.lineTo(cx, cy + ph - pz); g.lineTo(cx - pw, cy - pz);
+  g.closePath(); g.fill();
+  g.fillStyle = col(0.09, L, warm);
+  g.beginPath();
+  g.moveTo(cx + pw, cy); g.lineTo(cx, cy + ph);
+  g.lineTo(cx, cy + ph - pz); g.lineTo(cx + pw, cy - pz);
+  g.closePath(); g.fill();
+  g.fillStyle = col(0.24, L, warm);
+  g.beginPath();
+  g.moveTo(cx, cy - pz - ph); g.lineTo(cx + pw, cy - pz);
+  g.lineTo(cx, cy - pz + ph); g.lineTo(cx - pw, cy - pz);
+  g.closePath(); g.fill();
+
+  /* the figure on it: a shrouded thing, worn smooth */
+  var by = cy - pz;
+  var bh = 40 * scale;
+  var grad = g.createLinearGradient(cx, by - bh, cx, by);
+  grad.addColorStop(0, col(0.46, L, warm * 0.55));
+  grad.addColorStop(1, col(0.17, L, warm * 0.55));
+  g.fillStyle = grad;
+  g.beginPath();
+  g.moveTo(cx, by - bh);
+  g.quadraticCurveTo(cx + 9 * scale, by - bh * 0.62, cx + 8 * scale, by);
+  g.lineTo(cx - 8 * scale, by);
+  g.quadraticCurveTo(cx - 9 * scale, by - bh * 0.62, cx, by - bh);
+  g.closePath(); g.fill();
+  g.fillStyle = col(0.52, L, warm * 0.5);
+  g.beginPath();
+  g.ellipse(cx, by - bh * 0.94, 5.2 * scale, 6.0 * scale, 0, 0, Math.PI * 2);
+  g.fill();
+
+  /* the plaque. it catches the torch before anything else does */
+  var plq = col(s.read ? 0.62 : 0.34, L + s.glow * 0.5, Math.min(1, warm + 0.25));
+  g.fillStyle = plq;
+  g.fillRect(cx - 7 * scale, by - 13 * scale, 14 * scale, 9 * scale);
+  g.fillStyle = col(0.06, L, warm);
+  g.fillRect(cx - 5.4 * scale, by - 11.4 * scale, 10.8 * scale, 5.8 * scale);
+  if (s.p.t === 'letter') {
+    g.fillStyle = plq;
+    g.font = 'bold ' + (7 * scale).toFixed(1) + 'px "Courier New",monospace';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(s.p.v, cx, by - 8.3 * scale);
+  } else {
+    g.fillStyle = plq;
+    g.fillRect(cx - 3 * scale, by - 9.6 * scale, 6 * scale, 2.2 * scale);
+  }
+}
+
+var LEGS = 0;
+function drawHer() {
+  toScreen(her.x, her.y, P);
+  var hh = TH * 0.5 * scale;
+  var cx = P[0], cy = P[1] + hh * 0.5 + Math.sin(her.bob) * 1.2 * scale;
+  var lean = her.sway * 0.5;
+
+  /* the cloak. one shape, hood and all, tipped whichever way she is going */
+  var hgt = 62 * scale, wid = 21 * scale;
+  /* the torch is on the side she is facing, the moon on the top of her */
+  var gr = g.createLinearGradient(cx - wid, cy - hgt, cx + wid, cy);
+  gr.addColorStop(0, 'rgb(120,136,172)');
+  gr.addColorStop(0.42, 'rgb(74,72,84)');
+  gr.addColorStop(0.75, 'rgb(120,84,54)');
+  gr.addColorStop(1, 'rgb(22,24,34)');
+  g.fillStyle = gr;
+  g.beginPath();
+  g.moveTo(cx + lean, cy - hgt);
+  g.quadraticCurveTo(cx + wid + lean * 0.4, cy - hgt * 0.5, cx + wid * 1.25, cy);
+  g.quadraticCurveTo(cx, cy + 3 * scale, cx - wid * 1.25, cy);
+  g.quadraticCurveTo(cx - wid + lean * 0.4, cy - hgt * 0.5, cx + lean, cy - hgt);
+  g.closePath(); g.fill();
+
+  /* the dark of the hood, and no face in it */
+  /* the moon down one side of her, so she is a shape and not a hole */
+  g.strokeStyle = 'rgba(190,214,255,0.42)';
+  g.lineWidth = 1.6 * scale;
+  g.stroke();
+  /* the hood, and nothing in it but a little of the fire */
+  var hx = cx + lean * 0.8 + her.fx * 4 * scale, hy = cy - hgt * 0.80;
+  g.fillStyle = 'rgb(10,12,18)';
+  g.beginPath();
+  g.ellipse(hx, hy, 8.6 * scale, 9.6 * scale, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(196,218,255,0.30)';
+  g.lineWidth = 1.4 * scale;
+  g.beginPath();
+  g.ellipse(hx, hy, 8.6 * scale, 9.6 * scale, 0, Math.PI * 0.9, Math.PI * 1.9);
+  g.stroke();
+  g.fillStyle = 'rgba(255,176,96,0.28)';
+  g.beginPath();
+  g.ellipse(hx + her.fx * 3 * scale, hy + 1.5 * scale, 3.4 * scale, 2.6 * scale, 0, 0, Math.PI * 2);
+  g.fill();
+
+  /* the torch, held out ahead of her */
+  var tx = cx + her.fx * 23 * scale, ty = cy - hgt * 0.44 + her.fy * 5 * scale;
+  g.strokeStyle = 'rgb(96,78,58)';
+  g.lineWidth = 2.6 * scale; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(cx + her.fx * 9 * scale, cy - hgt * 0.52);
+  g.lineTo(tx, ty); g.stroke();
+
+  var f = 0.75 + Math.sin(time * 21) * 0.12 + Math.sin(time * 7.3) * 0.13;
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  var fg = g.createRadialGradient(tx, ty - 4 * scale, 0.5, tx, ty - 4 * scale, 23 * scale * f);
+  fg.addColorStop(0, 'rgba(255,236,196,0.95)');
+  fg.addColorStop(0.4, 'rgba(255,168,72,0.55)');
+  fg.addColorStop(1, 'rgba(255,120,40,0)');
+  g.fillStyle = fg;
+  g.beginPath(); g.arc(tx, ty - 4 * scale, 23 * scale * f, 0, Math.PI * 2); g.fill();
+  g.restore();
+  LEGS = 0;
+}
+
+/* the pool of light she stands in, laid over the ground */
+function drawTorchPool() {
+  toScreen(her.x, her.y, P);
+  var f = torch.flick * (0.94 + Math.sin(time * 9.1) * 0.04 + Math.sin(time * 3.7) * 0.03);
+  var rad = torch.r * TW * 0.62 * scale * f;
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  var gr = g.createRadialGradient(P[0], P[1] + TH * 0.5 * scale, rad * 0.05,
+                                  P[0], P[1] + TH * 0.5 * scale, rad);
+  gr.addColorStop(0, 'rgba(255,196,124,0.30)');
+  gr.addColorStop(0.45, 'rgba(240,150,74,0.13)');
+  gr.addColorStop(1, 'rgba(200,90,30,0)');
+  g.fillStyle = gr;
+  g.fillRect(P[0] - rad, P[1] - rad, rad * 2, rad * 2.2);
+  g.restore();
+}
+
+function drawPlumes(dt) {
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  for (var i = 0; i < plumes.length; i++) {
+    var p = plumes[i];
+    p.x += p.vx * dt * 0.12; p.y += p.vy * dt * 0.12;
+    if (p.x > 1.5) { p.x = -0.5; p.y = Math.random(); }
+    if (p.y > 1.4) p.y = -0.4; if (p.y < -0.5) p.y = 1.4;
+    var px = p.x * W, py = p.y * H;
+    var r = p.r * Math.max(W, H) * (1 + Math.sin(time * 0.21 + p.s) * 0.10);
+    var gr = g.createRadialGradient(px, py, r * 0.02, px, py, r);
+    var a = p.a * (0.75 + 0.25 * Math.sin(time * 0.16 + p.s * 1.7));
+    gr.addColorStop(0, 'rgba(126,152,198,' + a.toFixed(3) + ')');
+    gr.addColorStop(0.55, 'rgba(104,128,172,' + (a * 0.42).toFixed(3) + ')');
+    gr.addColorStop(1, 'rgba(80,100,140,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.fill();
+  }
+  g.restore();
+}
+
+/* ------------------------------------------------------------------- world */
+
+var stars = [];
+(function () {
+  for (var i = 0; i < 90; i++)
+    stars.push({ x: Math.random(), y: Math.random() * 0.62,
+                 m: 0.25 + Math.random() * 0.75, s: Math.random() * 900 });
+})();
+
+var skyGrad = null, vigGrad = null;
+function makeGradients() {
+  skyGrad = g.createLinearGradient(0, 0, 0, H * 0.8);
+  skyGrad.addColorStop(0, 'rgb(11,16,30)');
+  skyGrad.addColorStop(0.55, 'rgb(7,10,19)');
+  skyGrad.addColorStop(1, 'rgb(4,6,11)');
+  vigGrad = g.createRadialGradient(W * 0.5, H * 0.46, Math.min(W, H) * 0.18,
+                                   W * 0.5, H * 0.46, Math.max(W, H) * 0.78);
+  vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vigGrad.addColorStop(1, 'rgba(2,4,8,0.60)');
+}
+
+function drawSky() {
+  /* the ground runs out before the page does. what is past it is the night, and
+     the moon that all of this is being seen by. */
+  g.fillStyle = skyGrad;
+  g.fillRect(0, 0, W, H);
+
+  var px = -(cam.x - cam.y) * 3 * scale, py = -(cam.x + cam.y) * 1.4 * scale;
+  for (var i = 0; i < stars.length; i++) {
+    var st = stars[i];
+    var x = ((st.x * W + px) % W + W) % W;
+    var y = st.y * H * 0.6 + py * 0.4;
+    if (y < 0 || y > H * 0.72) continue;
+    var tw = st.m * (0.6 + 0.4 * Math.sin(time * 1.3 + st.s));
+    g.fillStyle = 'rgba(198,216,255,' + (tw * 0.5).toFixed(3) + ')';
+    g.fillRect(x, y, 1.4 * DPR, 1.4 * DPR);
+  }
+
+  var mx = (W * 0.79 + px * 0.5), my = H * 0.215 + py * 0.2;
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  var mg = g.createRadialGradient(mx, my, 1, mx, my, 120 * DPR);
+  mg.addColorStop(0, 'rgba(196,214,255,0.30)');
+  mg.addColorStop(0.25, 'rgba(150,176,230,0.10)');
+  mg.addColorStop(1, 'rgba(110,140,200,0)');
+  g.fillStyle = mg;
+  g.beginPath(); g.arc(mx, my, 120 * DPR, 0, Math.PI * 2); g.fill();
+  g.restore();
+  g.fillStyle = 'rgba(226,236,255,0.88)';
+  g.beginPath(); g.arc(mx, my, 15 * DPR, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(180,200,240,0.30)';
+  g.beginPath(); g.arc(mx - 5 * DPR, my - 3 * DPR, 3.4 * DPR, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(mx + 4 * DPR, my + 5 * DPR, 2.4 * DPR, 0, Math.PI * 2); g.fill();
+}
+
+/* the hedges never move, so the order they are drawn in is worked out once a
+   garden rather than sorted every frame. the few things that do move are put
+   into it as it is walked. */
+var hedgeOrder = [];
+function buildOrder() {
+  hedgeOrder.length = 0;
+  for (var y = 0; y < GH; y++)
+    for (var x = 0; x < GW; x++)
+      if (wall[y * GW + x]) hedgeOrder.push(y * GW + x);
+  hedgeOrder.sort(function (a, b) {
+    return ((a % GW) + ((a / GW) | 0)) - ((b % GW) + ((b / GW) | 0));
+  });
+}
+
+var movers = [];
+function drawWorld(dt) {
+  var x, y, i;
+  for (y = 0; y < GH; y++) for (x = 0; x < GW; x++) if (!wall[y * GW + x]) drawFloor(x, y);
+
+  movers.length = 0;
+  for (i = 0; i < statues.length; i++)
+    movers.push({ d: statues[i].x + statues[i].y, s: statues[i] });
+  movers.push({ d: her.x + her.y, s: null });
+  movers.sort(function (a, b) { return a.d - b.d; });
+
+  var m = 0;
+  for (i = 0; i < hedgeOrder.length; i++) {
+    var c = hedgeOrder[i];
+    x = c % GW; y = (c / GW) | 0;
+    var d = x + y + 1;                  /* the far corner of that tile */
+    while (m < movers.length && movers[m].d < d) {
+      if (movers[m].s) drawStatue(movers[m].s); else { drawTorchPool(); drawHer(); }
+      m++;
+    }
+    drawHedge(x, y);
+  }
+  while (m < movers.length) {
+    if (movers[m].s) drawStatue(movers[m].s); else { drawTorchPool(); drawHer(); }
+    m++;
+  }
+}
+
+/* ---------------------------------------------------------------- the page
+
+   the name across the top, one slot a letter, and the letters that have been
+   tried and were not in it underneath.                                      */
+
+function drawTop() {
+  var n = answer.length;
+  var slot = Math.min(46 * UI, (W - 40 * UI) / n * 0.80);
+  var gap = slot * 0.30;
+  var total = n * slot + (n - 1) * gap;
+  var x0 = (W - total) * 0.5;
+  var y0 = 34 * UI + slot * 0.5;
+
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (var i = 0; i < n; i++) {
+    var cx = x0 + i * (slot + gap) + slot * 0.5;
+    g.strokeStyle = 'rgba(150,178,220,0.30)';
+    g.lineWidth = 1.4 * UI;
+    g.beginPath();
+    g.moveTo(cx - slot * 0.42, y0 + slot * 0.46);
+    g.lineTo(cx + slot * 0.42, y0 + slot * 0.46);
+    g.stroke();
+    if (found[i]) {
+      g.fillStyle = solved ? 'rgba(255,222,172,0.98)' : 'rgba(226,238,255,0.96)';
+      g.font = 'bold ' + (slot * 0.86).toFixed(0) + 'px "Courier New",monospace';
+      g.fillText(answer.charAt(i), cx, y0);
+    }
+  }
+
+  if (wrong.length) {
+    g.font = (11 * UI).toFixed(0) + 'px "Courier New",monospace';
+    g.fillStyle = 'rgba(150,120,130,0.55)';
+    g.fillText(wrong.join(' '), W * 0.5, y0 + slot * 0.95);
+  }
+
+  g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
+  g.fillStyle = 'rgba(130,156,196,0.42)';
+  g.textAlign = 'left';
+  g.fillText('THE HEDGES  ' + (roundAt % ROUNDS.length + 1) + '/' + ROUNDS.length,
+             16 * UI, 20 * UI);
+
+  var read = 0;
+  for (i = 0; i < statues.length; i++) if (statues[i].read) read++;
+  g.textAlign = 'right';
+  g.fillText('STATUES ' + read + '/' + statues.length, W - 16 * UI, 20 * UI);
+}
+
+/* ------------------------------------------------------------- the controls
+
+   two of them. a stick under the left thumb, which appears wherever that thumb
+   lands, and one button under the right.                                     */
+
+var told = 0;                            /* how long the one instruction stays */
+var stick = { on:false, id:null, ox:0, oy:0, x:0, y:0, dx:0, dy:0 };
+var btn = { id:null, down:0 };
+
+function stickHome() {
+  return [W * 0.20, H - 96 * UI];
+}
+function btnPos() {
+  return [W - 76 * UI, H - 96 * UI];
+}
+var BTN_R = 40;
+
+function drawControls() {
+  var i;
+  var home = stickHome();
+  var bx = stick.on ? stick.ox : home[0], by = stick.on ? stick.oy : home[1];
+  var R = 52 * UI;
+
+  g.strokeStyle = 'rgba(160,190,235,' + (stick.on ? 0.34 : 0.16) + ')';
+  g.lineWidth = 1.5 * UI;
+  g.beginPath(); g.arc(bx, by, R, 0, Math.PI * 2); g.stroke();
+
+  var kx = bx + stick.dx * R * 0.62, ky = by + stick.dy * R * 0.62;
+  g.fillStyle = 'rgba(178,204,244,' + (stick.on ? 0.30 : 0.14) + ')';
+  g.beginPath(); g.arc(kx, ky, 21 * UI, 0, Math.PI * 2); g.fill();
+
+  var b = btnPos(), br = BTN_R * UI * (1 - btn.down * 0.08);
+  var near = nearStatue();
+  var pulse = near && !near.read ? 0.5 + 0.5 * Math.sin(time * 3.4) : 0;
+  g.strokeStyle = 'rgba(255,206,150,' + (0.20 + pulse * 0.55) + ')';
+  g.lineWidth = 1.6 * UI;
+  g.beginPath(); g.arc(b[0], b[1], br, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = 'rgba(255,196,132,' + (0.07 + pulse * 0.16 + btn.down * 0.10) + ')';
+  g.beginPath(); g.arc(b[0], b[1], br, 0, Math.PI * 2); g.fill();
+
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = (11 * UI).toFixed(0) + 'px "Courier New",monospace';
+  g.fillStyle = 'rgba(255,214,164,' + (0.42 + pulse * 0.45) + ')';
+  g.fillText(near ? 'READ' : 'SAY', b[0], b[1]);
+
+  if (told < 1) {
+    var a = 1 - told;
+    g.font = (11 * UI).toFixed(0) + 'px "Courier New",monospace';
+    g.fillStyle = 'rgba(176,200,240,' + (a * 0.55).toFixed(3) + ')';
+    g.fillText('WALK THE HEDGES  ·  READ THE STATUES  ·  SAY THE NAME',
+               W * 0.5, H - 168 * UI);
+  }
+}
+
+function nearStatue() {
+  for (var i = 0; i < statues.length; i++) {
+    var s = statues[i];
+    var dx = s.x - her.x, dy = s.y - her.y;
+    if (dx*dx + dy*dy < 1.25) return s;
+  }
+  return null;
+}
+
+/* --------------------------------------------------------------- the panels
+
+   the plaque she is reading, and the ring of letters. only ever one of them,
+   and either one is dismissed by touching anywhere off it.                   */
+
+var panel = null;                        /* {kind:'plaque', s:statue} | {kind:'letters'} */
+
+function drawPixels(rows, cx, cy, px) {
+  var h = rows.length, w = rows[0].length;
+  var x0 = cx - w * px * 0.5, y0 = cy - h * px * 0.5;
+  for (var r = 0; r < h; r++)
+    for (var c = 0; c < w; c++)
+      if (rows[r].charAt(c) === '#') {
+        g.fillStyle = 'rgba(226,236,255,' + (0.72 + 0.24 * hash(c, r, 7)).toFixed(2) + ')';
+        g.fillRect(x0 + c * px, y0 + r * px, px * 0.92, px * 0.92);
+      }
+}
+
+function wrapText(txt, max) {
+  var words = txt.split(' '), lines = [], line = '';
+  for (var i = 0; i < words.length; i++) {
+    var trial = line ? line + ' ' + words[i] : words[i];
+    if (g.measureText(trial).width > max && line) { lines.push(line); line = words[i]; }
+    else line = trial;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawPanel() {
+  if (!panel) return;
+  g.fillStyle = 'rgba(6,9,15,0.72)';
+  g.fillRect(0, 0, W, H);
+
+  if (panel.kind === 'plaque') {
+    var p = panel.s.p;
+    var pw = Math.min(W * 0.86, 460 * UI), ph = Math.min(H * 0.5, 250 * UI);
+    var px = (W - pw) * 0.5, py = (H - ph) * 0.5;
+    g.fillStyle = 'rgba(18,23,34,0.96)';
+    g.fillRect(px, py, pw, ph);
+    g.strokeStyle = 'rgba(196,168,116,0.5)';
+    g.lineWidth = 1.5 * UI;
+    g.strokeRect(px + 5 * UI, py + 5 * UI, pw - 10 * UI, ph - 10 * UI);
+
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    if (p.t === 'letter') {
+      g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
+      g.fillStyle = 'rgba(150,176,214,0.62)';
+      g.fillText('CUT INTO THE STONE', W * 0.5, py + 40 * UI);
+      g.font = 'bold ' + (86 * UI).toFixed(0) + 'px "Courier New",monospace';
+      g.fillStyle = 'rgba(255,222,168,0.95)';
+      g.fillText(p.v, W * 0.5, H * 0.5 + 6 * UI);
+    } else if (p.t === 'icon') {
+      drawPixels(ICONS[p.v], W * 0.5, H * 0.5 - 14 * UI, 8 * UI);
+      g.font = (11 * UI).toFixed(0) + 'px "Courier New",monospace';
+      g.fillStyle = 'rgba(174,198,236,0.78)';
+      var ls = wrapText(p.line, pw - 60 * UI);
+      for (var i = 0; i < ls.length; i++)
+        g.fillText(ls[i], W * 0.5, py + ph - 46 * UI + i * 15 * UI);
+    } else {
+      g.font = (14 * UI).toFixed(0) + 'px "Courier New",monospace';
+      g.fillStyle = 'rgba(214,230,255,0.88)';
+      var lines = wrapText(p.v, pw - 60 * UI);
+      for (i = 0; i < lines.length; i++)
+        g.fillText(lines[i], W * 0.5, H * 0.5 + (i - (lines.length - 1) / 2) * 22 * UI);
+    }
+    g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
+    g.fillStyle = 'rgba(140,164,204,0.45)';
+    g.fillText('TOUCH ANYWHERE', W * 0.5, py + ph - 16 * UI);
+    return;
+  }
+
+  /* the alphabet */
+  var cols = 7, rows = 4;
+  var cell = Math.min((W * 0.86) / cols, (H * 0.44) / rows);
+  var gx = (W - cols * cell) * 0.5, gy = (H - rows * cell) * 0.5 + 10 * UI;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
+  g.fillStyle = 'rgba(150,176,214,0.62)';
+  g.fillText('SAY A LETTER', W * 0.5, gy - 26 * UI);
+  for (var i2 = 0; i2 < 26; i2++) {
+    var c = String.fromCharCode(65 + i2);
+    var cxx = gx + (i2 % cols) * cell + cell * 0.5;
+    var cyy = gy + ((i2 / cols) | 0) * cell + cell * 0.5;
+    var used = wrong.indexOf(c) >= 0;
+    var got = answer.indexOf(c) >= 0 && found[answer.indexOf(c)];
+    g.strokeStyle = 'rgba(150,178,220,' + (used || got ? 0.10 : 0.24) + ')';
+    g.lineWidth = 1.2 * UI;
+    g.beginPath(); g.arc(cxx, cyy, cell * 0.36, 0, Math.PI * 2); g.stroke();
+    g.font = 'bold ' + (cell * 0.40).toFixed(0) + 'px "Courier New",monospace';
+    g.fillStyle = got ? 'rgba(255,214,158,0.85)'
+               : used ? 'rgba(140,120,132,0.35)'
+                      : 'rgba(206,224,255,0.86)';
+    g.fillText(c, cxx, cyy);
+  }
+}
+
+function drawSolved() {
+  var a = Math.min(1, solvedT / 0.5);
+  g.save();
+  g.globalAlpha = a;
+  g.fillStyle = 'rgba(8,11,18,0.55)';
+  g.fillRect(0, H * 0.5 - 60 * UI, W, 120 * UI);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold ' + (30 * UI).toFixed(0) + 'px "Courier New",monospace';
+  g.fillStyle = 'rgba(255,226,178,0.95)';
+  g.fillText(answer, W * 0.5, H * 0.5 - 8 * UI);
+  g.font = (11 * UI).toFixed(0) + 'px "Courier New",monospace';
+  g.fillStyle = 'rgba(180,200,236,0.7)';
+  g.fillText('THE HEDGES OPEN ONTO ANOTHER GARDEN', W * 0.5, H * 0.5 + 26 * UI);
+  g.restore();
+}
+
+/* ------------------------------------------------------------------ sound
+
+   a low room tone with a fifth in it, and three small noises: right, wrong,
+   and the one at the end.                                                   */
+
+var sfx = (function () {
+  var ctx = null, started = false, bed = null;
+
+  function start() {
+    if (started) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    started = true;
+    ctx = new AC();
+    resume();
+    bed = ctx.createGain(); bed.gain.value = 0;
+    var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.value = 320; lp.Q.value = 2;
+    lp.connect(bed); bed.connect(ctx.destination);
+    var f = [55, 82.4, 110];
+    for (var i = 0; i < f.length; i++) {
+      var o = ctx.createOscillator(); o.type = i === 2 ? 'sine' : 'sawtooth';
+      o.frequency.value = f[i] * (1 + (i - 1) * 0.0009);
+      var gn = ctx.createGain(); gn.gain.value = i === 2 ? 0.10 : 0.055;
+      o.connect(gn); gn.connect(lp); o.start();
+    }
+    var lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 1 / 37;
+    var lg = ctx.createGain(); lg.gain.value = 120;
+    lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
+    bed.gain.setValueAtTime(0.0001, ctx.currentTime);
+    bed.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 6);
+  }
+
+  function resume() {
+    if (ctx && ctx.state === 'suspended' && ctx.resume) {
+      var r = ctx.resume(); if (r && r.catch) r.catch(function () {});
+    }
+  }
+
+  function ping(f0, f1, dur, type, vol) {
+    if (!started || !ctx) return;
+    var t = ctx.currentTime;
+    var o = ctx.createOscillator(); o.type = type || 'sine';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    var gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(vol || 0.10, t + 0.015);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(gn); gn.connect(ctx.destination);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  return {
+    start: start, resume: resume,
+    read:  function () { ping(520, 780, 0.5, 'sine', 0.07); },
+    right: function () { ping(660, 1320, 0.7, 'sine', 0.09); },
+    wrong: function () { ping(180, 74, 0.55, 'sawtooth', 0.06); },
+    solve: function () {
+      ping(523, 1046, 1.1, 'sine', 0.10);
+      setTimeout(function () { ping(784, 1568, 1.3, 'sine', 0.08); }, 220);
+    }
+  };
+})();
+
+/* ------------------------------------------------------------------- input */
+
+function canvasPoint(e, out) {
+  out[0] = e.clientX * DPR; out[1] = e.clientY * DPR;
+}
+
+var _pt = [0, 0];
+
+function onDown(e) {
+  sfx.start(); sfx.resume();
+  canvasPoint(e, _pt);
+
+  if (panel) {                            /* a panel eats the touch */
+    if (panel.kind === 'letters') {
+      var c = letterAt(_pt[0], _pt[1]);
+      if (c) { guess(c); panel = null; return; }
+    }
+    panel = null;
+    return;
+  }
+  if (solved) return;
+
+  var b = btnPos();
+  var dx = _pt[0] - b[0], dy = _pt[1] - b[1];
+  if (dx*dx + dy*dy < (BTN_R * UI * 1.5) * (BTN_R * UI * 1.5)) {
+    btn.id = e.pointerId; btn.down = 1;
+    act();
+    return;
+  }
+  if (_pt[0] < W * 0.55 && _pt[1] > H * 0.45) {
+    stick.on = true; stick.id = e.pointerId;
+    stick.ox = _pt[0]; stick.oy = _pt[1];
+    stick.dx = 0; stick.dy = 0;
+    return;
+  }
+}
+
+function onMove(e) {
+  if (e.pointerId !== stick.id || !stick.on) return;
+  canvasPoint(e, _pt);
+  var dx = _pt[0] - stick.ox, dy = _pt[1] - stick.oy;
+  var R = 52 * UI;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  if (d > R) { dx = dx / d * R; dy = dy / d * R; d = R; }
+  stick.dx = dx / R; stick.dy = dy / R;
+}
+
+function onUp(e) {
+  if (e.pointerId === stick.id) { stick.on = false; stick.id = null; stick.dx = stick.dy = 0; }
+  if (e.pointerId === btn.id) { btn.id = null; btn.down = 0; }
+}
+
+function letterAt(px, py) {
+  var cols = 7, rows = 4;
+  var cell = Math.min((W * 0.86) / cols, (H * 0.44) / rows);
+  var gx = (W - cols * cell) * 0.5, gy = (H - rows * cell) * 0.5 + 10 * UI;
+  for (var i = 0; i < 26; i++) {
+    var cx = gx + (i % cols) * cell + cell * 0.5;
+    var cy = gy + ((i / cols) | 0) * cell + cell * 0.5;
+    var dx = px - cx, dy = py - cy;
+    if (dx*dx + dy*dy < (cell * 0.45) * (cell * 0.45)) return String.fromCharCode(65 + i);
+  }
+  return null;
+}
+
+function act() {
+  var s = nearStatue();
+  if (s) {
+    if (!s.read && s.p.t === 'letter') reveal(s.p.v);
+    s.read = true; s.glow = 1;
+    panel = { kind: 'plaque', s: s };
+    sfx.read();
+  } else {
+    panel = { kind: 'letters' };
+  }
+}
+
+cv.addEventListener('pointerdown', function (e) {
+  onDown(e);
+  if (cv.setPointerCapture) { try { cv.setPointerCapture(e.pointerId); } catch (err) {} }
+});
+cv.addEventListener('pointermove', onMove);
+cv.addEventListener('pointerup', onUp);
+cv.addEventListener('pointercancel', onUp);
+cv.addEventListener('lostpointercapture', onUp);
+window.addEventListener('pointerup', onUp);
+window.addEventListener('pointercancel', onUp);
+window.addEventListener('blur', function () {
+  stick.on = false; stick.id = null; stick.dx = stick.dy = 0; btn.id = null; btn.down = 0;
+});
+
+var keys = {};
+window.addEventListener('keydown', function (e) {
+  sfx.start(); sfx.resume();
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === 'Escape') { panel = null; return; }
+  /* with the letters open, a letter is a letter — including the one the button
+     is bound to. it is only the action key when there is nothing open */
+  if (panel && panel.kind === 'letters' && /^[a-z]$/i.test(e.key)) {
+    e.preventDefault();
+    guess(e.key.toUpperCase()); panel = null;
+    return;
+  }
+  if (e.key === ' ' || e.key.toLowerCase() === 'e') {
+    e.preventDefault();
+    if (panel) panel = null; else if (!solved) act();
+  }
+});
+window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
+
+function keyVec(out) {
+  var x = 0, y = 0;
+  if (keys['a'] || keys['arrowleft'])  x -= 1;
+  if (keys['d'] || keys['arrowright']) x += 1;
+  if (keys['w'] || keys['arrowup'])    y -= 1;
+  if (keys['s'] || keys['arrowdown'])  y += 1;
+  var d = Math.sqrt(x*x + y*y);
+  out[0] = d ? x / d : 0; out[1] = d ? y / d : 0;
+}
+
+/* -------------------------------------------------------------- the walking
+
+   the stick is in screen space and the maze is turned forty-five degrees, so
+   what she is pushed by has to be turned back before she moves on it.        */
+
+var RAD = 0.30;
+function blocked(x, y) {
+  var cx = Math.floor(x), cy = Math.floor(y);
+  for (var j = cy - 1; j <= cy + 1; j++)
+    for (var i = cx - 1; i <= cx + 1; i++) {
+      if (!W_(i, j)) continue;
+      var nx = Math.max(i, Math.min(i + 1, x));
+      var ny = Math.max(j, Math.min(j + 1, y));
+      var dx = x - nx, dy = y - ny;
+      if (dx*dx + dy*dy < RAD * RAD) return true;
+    }
+  return false;
+}
+
+var _kv = [0, 0];
+function walk(dt) {
+  var sx = stick.dx, sy = stick.dy;
+  keyVec(_kv);
+  if (_kv[0] || _kv[1]) { sx = _kv[0]; sy = _kv[1]; }
+  var mag = Math.min(1, Math.sqrt(sx*sx + sy*sy));
+  if (mag < 0.14 || panel || solved) {
+    her.sway *= 0.86;
+    return;
+  }
+  sx /= (mag || 1); sy /= (mag || 1);
+
+  /* screen right is (+1,-1) in the grid, screen down is (+1,+1) */
+  var gx = (sx + sy * (TW / TH)) * 0.5;
+  var gy = (sy * (TW / TH) - sx) * 0.5;
+  var d = Math.sqrt(gx*gx + gy*gy) || 1;
+  gx /= d; gy /= d;
+
+  var sp = 2.9 * mag * dt;
+  var nx = her.x + gx * sp, ny = her.y + gy * sp;
+  if (!blocked(nx, her.y)) her.x = nx;
+  if (!blocked(her.x, ny)) her.y = ny;
+
+  her.fx = her.fx * 0.86 + sx * 0.14;
+  her.fy = her.fy * 0.86 + sy * 0.14;
+  her.bob += dt * 11 * mag;
+  her.sway = her.sway * 0.86 + sx * 0.14 * 6;
+}
+
+/* -------------------------------------------------------------------- loop */
+
+var time = 0, last = 0;
+
+function resize() {
+  W = Math.floor(window.innerWidth * DPR);
+  H = Math.floor(window.innerHeight * DPR);
+  cv.width = W; cv.height = H;
+  /* about eight tiles across, whatever the page is */
+  scale = Math.max(0.55, Math.min(1.5, W / (TW * 8.2)));
+  UI = Math.max(DPR, Math.min(W, H) / 430);
+  makeGradients();
+}
+window.addEventListener('resize', resize);
+
+function frame(ms) {
+  requestAnimationFrame(frame);
+  var now = ms * 0.001;
+  var dt = Math.min(now - last, 0.05) || 0.016;
+  last = now; time = now;
+
+  walk(dt);
+  if (stick.on || panel || keys['a'] || keys['d'] || keys['w'] || keys['s'])
+    told = Math.min(1, told + dt * 0.9);
+  torch.flick += (1 - torch.flick) * dt * 0.55;
+  shake *= 0.88;
+  for (var i = 0; i < statues.length; i++)
+    statues[i].glow = Math.max(statues[i].read ? 0.25 : 0, statues[i].glow - dt * 0.8);
+
+  cam.x += (her.x - cam.x) * Math.min(1, dt * 6);
+  cam.y += (her.y - cam.y) * Math.min(1, dt * 6);
+
+  if (solved) {
+    solvedT += dt;
+    if (solvedT > 3.4) { roundAt++; startRound(); seedPlumes(); }
+  }
+
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  drawSky();
+
+  g.save();
+  if (shake > 0.2) g.translate((Math.random() - 0.5) * shake * DPR,
+                               (Math.random() - 0.5) * shake * DPR);
+  drawWorld(dt);
+  g.restore();
+
+  drawPlumes(dt);
+
+  /* the night closes in at the corners */
+  g.fillStyle = vigGrad;
+  g.fillRect(0, 0, W, H);
+
+  drawTop();
+  drawControls();
+  if (solved) drawSolved();
+  drawPanel();
+}
+
+resize();
+startRound();
+seedPlumes();
+requestAnimationFrame(frame);
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+
+</body>
+</html>
