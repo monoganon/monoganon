@@ -396,7 +396,7 @@ let gameOverState = false; // Add this variable to keep track of the game state
       skull.setAttribute('cx', head.x.toFixed(1));
       skull.setAttribute('cy', head.y.toFixed(1));
       skull.setAttribute('r', (bodyWidth / 2 + 2).toFixed(1));
-      skull.setAttribute('fill', '#8bebff');
+      skull.setAttribute('fill', 'url(#worm-gradient)');
 
       const eyeOut = tileSize * 0.17;
       const eyeFwd = tileSize * 0.12;
