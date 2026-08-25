@@ -325,6 +325,71 @@ function guess(ch) {
    they are not in the maze, they are between you and it: a few slow bodies of
    moonlit air crossing the page, thicker where the torch is under them.      */
 
+/* one wind for the whole page: the plumes ride it, the wisps ride it, and the
+   noise under everything is however hard it happens to be blowing. it turns
+   slowly and never quite settles. */
+var wind = { x: 0.5, y: 0.1, s: 0.5 };
+function stirWind() {
+  var a = Math.sin(time * 0.037) * 1.5 + Math.sin(time * 0.011 + 2.1) * 1.1;
+  wind.s = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(time * 0.023 + 1.3)) *
+                  (0.7 + 0.3 * Math.sin(time * 0.0071));
+  wind.x = Math.cos(a) * wind.s;
+  wind.y = Math.sin(a) * wind.s * 0.22;
+}
+
+/* the wisps. torn bits of nothing going past, quick where the plumes are slow.
+   they are in front of the garden and behind the interface. */
+var wisps = [];
+function seedWisps() {
+  wisps.length = 0;
+  var n = 74;
+  for (var i = 0; i < n; i++)
+    wisps.push({ x: Math.random(), y: Math.random(),
+                 len: 0.25 + Math.pow(Math.random(), 2.2) * 2.4,
+                 sp: 0.30 + Math.pow(Math.random(), 1.6) * 1.9,
+                 a: 0.035 + Math.random() * 0.13,
+                 w: Math.random() * 900,
+                 py: 0, px: 0 });
+}
+
+function drawWisps(dt) {
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  g.lineCap = 'round';
+  var base = Math.max(W, H);
+  for (var i = 0; i < wisps.length; i++) {
+    var p = wisps[i];
+    /* the wind, plus a slow curl of its own so they do not all march */
+    var wob = Math.sin(time * 0.7 + p.w) * 0.35 + Math.sin(time * 0.23 + p.w * 1.7) * 0.5;
+    var vx = (wind.x + wob * 0.22) * p.sp * 0.055;
+    var vy = (wind.y + Math.cos(time * 0.5 + p.w) * 0.13) * p.sp * 0.048;
+    p.px = vx; p.py = vy;
+    p.x += vx * dt; p.y += vy * dt;
+    if (p.x > 1.08) p.x -= 1.16; if (p.x < -0.08) p.x += 1.16;
+    if (p.y > 1.08) p.y -= 1.16; if (p.y < -0.08) p.y += 1.16;
+
+    var x = p.x * W, y = p.y * H;
+    var m = Math.sqrt(vx*vx + vy*vy) || 1e-4;
+    var L = p.len * base * 0.045 * Math.min(1.6, m * 14);
+    var ux = vx / m, uy = vy / m;
+    /* faint at both ends: a stroke that never quite starts or stops */
+    var lg = g.createLinearGradient(x - ux * L * 0.5, y - uy * L * 0.5,
+                                    x + ux * L * 0.5, y + uy * L * 0.5);
+    var a = p.a * (0.45 + 0.55 * wind.s) * (0.6 + 0.4 * Math.sin(time * 0.9 + p.w));
+    lg.addColorStop(0, 'rgba(150,178,226,0)');
+    lg.addColorStop(0.5, 'rgba(160,188,236,' + a.toFixed(3) + ')');
+    lg.addColorStop(1, 'rgba(150,178,226,0)');
+    g.strokeStyle = lg;
+    g.lineWidth = (0.7 + p.len * 0.5) * UI;
+    g.beginPath();
+    g.moveTo(x - ux * L * 0.5, y - uy * L * 0.5);
+    g.quadraticCurveTo(x - uy * L * 0.38 * wob, y + ux * L * 0.38 * wob,
+                       x + ux * L * 0.5, y + uy * L * 0.5);
+    g.stroke();
+  }
+  g.restore();
+}
+
 var plumes = [];
 function seedPlumes() {
   plumes.length = 0;
@@ -614,7 +679,8 @@ function drawPlumes(dt) {
   g.globalCompositeOperation = 'lighter';
   for (var i = 0; i < plumes.length; i++) {
     var p = plumes[i];
-    p.x += p.vx * dt * 0.12; p.y += p.vy * dt * 0.12;
+    p.x += (p.vx + wind.x * 0.030) * dt * 0.12;
+    p.y += (p.vy + wind.y * 0.030) * dt * 0.12;
     if (p.x > 1.5) { p.x = -0.5; p.y = Math.random(); }
     if (p.y > 1.4) p.y = -0.4; if (p.y < -0.5) p.y = 1.4;
     var px = p.x * W, py = p.y * H;
@@ -866,6 +932,23 @@ function wrapText(txt, max) {
   return lines;
 }
 
+/* the letters. six across rather than seven, and held a good way in from the
+   sides: a phone treats the outside inch of its own screen as a back gesture
+   and swallows anything put there — which is why the left column was so hard
+   to press. worked out in one place so the drawing and the pressing agree. */
+var LG = { cell:0, gx:0, gy:0, cols:6, rows:5 };
+function letterGrid() {
+  var margin = Math.max(40 * UI, W * 0.10);
+  LG.cell = Math.min((W - margin * 2) / LG.cols, (H * 0.46) / LG.rows);
+  LG.gx = (W - LG.cols * LG.cell) * 0.5;
+  LG.gy = (H - LG.rows * LG.cell) * 0.5 + 10 * UI;
+  return LG;
+}
+function letterXY(i, out) {
+  out[0] = LG.gx + (i % LG.cols) * LG.cell + LG.cell * 0.5;
+  out[1] = LG.gy + ((i / LG.cols) | 0) * LG.cell + LG.cell * 0.5;
+}
+
 function drawPanel() {
   if (!panel) return;
   g.fillStyle = 'rgba(6,9,15,0.72)';
@@ -910,27 +993,25 @@ function drawPanel() {
   }
 
   /* the alphabet */
-  var cols = 7, rows = 4;
-  var cell = Math.min((W * 0.86) / cols, (H * 0.44) / rows);
-  var gx = (W - cols * cell) * 0.5, gy = (H - rows * cell) * 0.5 + 10 * UI;
+  var L = letterGrid();
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
   g.fillStyle = 'rgba(150,176,214,0.62)';
-  g.fillText('SAY A LETTER', W * 0.5, gy - 26 * UI);
+  g.fillText('SAY A LETTER', W * 0.5, L.gy - 26 * UI);
+  var xy = [0, 0];
   for (var i2 = 0; i2 < 26; i2++) {
     var c = String.fromCharCode(65 + i2);
-    var cxx = gx + (i2 % cols) * cell + cell * 0.5;
-    var cyy = gy + ((i2 / cols) | 0) * cell + cell * 0.5;
+    letterXY(i2, xy);
     var used = wrong.indexOf(c) >= 0;
     var got = answer.indexOf(c) >= 0 && found[answer.indexOf(c)];
     g.strokeStyle = 'rgba(150,178,220,' + (used || got ? 0.10 : 0.24) + ')';
     g.lineWidth = 1.2 * UI;
-    g.beginPath(); g.arc(cxx, cyy, cell * 0.36, 0, Math.PI * 2); g.stroke();
-    g.font = 'bold ' + (cell * 0.40).toFixed(0) + 'px "Courier New",monospace';
+    g.beginPath(); g.arc(xy[0], xy[1], L.cell * 0.36, 0, Math.PI * 2); g.stroke();
+    g.font = 'bold ' + (L.cell * 0.40).toFixed(0) + 'px "Courier New",monospace';
     g.fillStyle = got ? 'rgba(255,214,158,0.85)'
                : used ? 'rgba(140,120,132,0.35)'
                       : 'rgba(206,224,255,0.86)';
-    g.fillText(c, cxx, cyy);
+    g.fillText(c, xy[0], xy[1]);
   }
 }
 
@@ -958,6 +1039,48 @@ function drawSolved() {
 var sfx = (function () {
   var ctx = null, started = false, bed = null;
 
+  /* the pad. one note, held for as long as the page is open, and the note is
+     the harmonic series climbed one partial at a time: the fundamental and its
+     octave underneath the whole time, and above them a few voices that fade in
+     on a partial, sit on it, and fade out while the next ones come up. it goes
+     round and round and never lands anywhere, because a harmonic series has
+     nowhere to land. dry — no room on it, nothing but the sines. */
+  var F0 = 55;                                  /* an A, well down */
+  var PARTIALS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 12, 9, 6];
+  var voices = [], partAt = 0, padBus = null;
+
+  var windGain = null, windLp = null;
+
+  function makeVoice() {
+    var o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.value = F0;
+    var gn = ctx.createGain(); gn.gain.value = 0.0001;
+    o.connect(gn); gn.connect(padBus); o.start();
+    return { o: o, g: gn, t: 0 };
+  }
+
+  /* a voice takes the next partial, comes up over a quarter of a minute, sits
+     on it, and goes back down. six of them, started at different times, so
+     there are always three or four sounding and the chord is never the same
+     one twice running. */
+  function sound(v) {
+    var t = ctx.currentTime;
+    var n = PARTIALS[partAt % PARTIALS.length]; partAt++;
+    var f = F0 * n;
+    var up = 13 + Math.random() * 7;
+    var hold = 11 + Math.random() * 12;
+    var down = 14 + Math.random() * 9;
+    /* the higher it is the quieter, or the top of it whistles */
+    var peak = 0.070 / Math.pow(n, 0.72);
+    v.o.frequency.setValueAtTime(f * (1 + (Math.random() - 0.5) * 0.0016), t);
+    v.g.gain.cancelScheduledValues(t);
+    v.g.gain.setValueAtTime(0.0001, t);
+    v.g.gain.exponentialRampToValueAtTime(peak, t + up);
+    v.g.gain.setValueAtTime(peak, t + up + hold);
+    v.g.gain.exponentialRampToValueAtTime(0.0001, t + up + hold + down);
+    v.t = up + hold + down + 1.5;
+  }
+
   function start() {
     if (started) return;
     var AC = window.AudioContext || window.webkitAudioContext;
@@ -966,21 +1089,66 @@ var sfx = (function () {
     ctx = new AC();
     resume();
     bed = ctx.createGain(); bed.gain.value = 0;
+    bed.connect(ctx.destination);
+
+    /* the two notes that never leave: the fundamental and its octave */
     var lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.value = 320; lp.Q.value = 2;
-    lp.connect(bed); bed.connect(ctx.destination);
-    var f = [55, 82.4, 110];
+    lp.frequency.value = 300; lp.Q.value = 1.2;
+    lp.connect(bed);
+    var f = [F0, F0 * 2];
     for (var i = 0; i < f.length; i++) {
-      var o = ctx.createOscillator(); o.type = i === 2 ? 'sine' : 'sawtooth';
-      o.frequency.value = f[i] * (1 + (i - 1) * 0.0009);
-      var gn = ctx.createGain(); gn.gain.value = i === 2 ? 0.10 : 0.055;
+      var o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.value = f[i];
+      var gn = ctx.createGain(); gn.gain.value = i ? 0.055 : 0.13;
       o.connect(gn); gn.connect(lp); o.start();
     }
-    var lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 1 / 37;
-    var lg = ctx.createGain(); lg.gain.value = 120;
+    var lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 1 / 41;
+    var lg = ctx.createGain(); lg.gain.value = 90;
     lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
+
+    /* the partials above them */
+    padBus = ctx.createGain(); padBus.gain.value = 1;
+    var pl = ctx.createBiquadFilter(); pl.type = 'lowpass';
+    pl.frequency.value = 2400; pl.Q.value = 0.5;
+    padBus.connect(pl); pl.connect(bed);
+    for (i = 0; i < 6; i++) {
+      var v = makeVoice();
+      v.t = i * 7.5;                          /* they come in one at a time */
+      voices.push(v);
+    }
+
+    /* and the wind, which is only ever a rumble with a little air on top */
+    var src = ctx.createBufferSource();
+    var len = ctx.sampleRate * 4, buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    var d = buf.getChannelData(0), last = 0;
+    for (i = 0; i < len; i++) {              /* brown-ish: the low end of it */
+      last = (last + (Math.random() * 2 - 1) * 0.04) * 0.996;
+      d[i] = last * 6;
+    }
+    src.buffer = buf; src.loop = true;
+    windLp = ctx.createBiquadFilter(); windLp.type = 'lowpass';
+    windLp.frequency.value = 150; windLp.Q.value = 0.9;
+    windGain = ctx.createGain(); windGain.gain.value = 0.0001;
+    src.connect(windLp); windLp.connect(windGain); windGain.connect(bed);
+    src.start();
+
     bed.gain.setValueAtTime(0.0001, ctx.currentTime);
-    bed.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 6);
+    bed.gain.linearRampToValueAtTime(0.62, ctx.currentTime + 9);
+  }
+
+  /* the voices are stepped from the page's own clock rather than a timer, so
+     nothing piles up while the tab is in the background */
+  function tick(dt, gust) {
+    if (!started || !ctx) return;
+    for (var i = 0; i < voices.length; i++) {
+      voices[i].t -= dt;
+      if (voices[i].t <= 0) sound(voices[i]);
+    }
+    if (windGain) {
+      var t = ctx.currentTime;
+      windGain.gain.setTargetAtTime(0.055 + gust * 0.16, t, 1.4);
+      windLp.frequency.setTargetAtTime(110 + gust * 190, t, 1.8);
+    }
   }
 
   function resume() {
@@ -1004,7 +1172,7 @@ var sfx = (function () {
   }
 
   return {
-    start: start, resume: resume,
+    start: start, resume: resume, tick: tick,
     read:  function () { ping(520, 780, 0.5, 'sine', 0.07); },
     right: function () { ping(660, 1320, 0.7, 'sine', 0.09); },
     wrong: function () { ping(180, 74, 0.55, 'sawtooth', 0.06); },
@@ -1067,17 +1235,17 @@ function onUp(e) {
   if (e.pointerId === btn.id) { btn.id = null; btn.down = 0; }
 }
 
+var _lxy = [0, 0];
 function letterAt(px, py) {
-  var cols = 7, rows = 4;
-  var cell = Math.min((W * 0.86) / cols, (H * 0.44) / rows);
-  var gx = (W - cols * cell) * 0.5, gy = (H - rows * cell) * 0.5 + 10 * UI;
+  var L = letterGrid();
+  var best = null, bd = (L.cell * 0.52) * (L.cell * 0.52);
   for (var i = 0; i < 26; i++) {
-    var cx = gx + (i % cols) * cell + cell * 0.5;
-    var cy = gy + ((i / cols) | 0) * cell + cell * 0.5;
-    var dx = px - cx, dy = py - cy;
-    if (dx*dx + dy*dy < (cell * 0.45) * (cell * 0.45)) return String.fromCharCode(65 + i);
+    letterXY(i, _lxy);
+    var dx = px - _lxy[0], dy = py - _lxy[1];
+    var d = dx*dx + dy*dy;
+    if (d < bd) { bd = d; best = String.fromCharCode(65 + i); }
   }
-  return null;
+  return best;
 }
 
 function act() {
@@ -1140,7 +1308,8 @@ function keyVec(out) {
    the stick is in screen space and the maze is turned forty-five degrees, so
    what she is pushed by has to be turned back before she moves on it.        */
 
-var RAD = 0.30;
+var RAD = 0.26;
+var AX = [[1,0],[-1,0],[0,1],[0,-1]];
 function blocked(x, y) {
   var cx = Math.floor(x), cy = Math.floor(y);
   for (var j = cy - 1; j <= cy + 1; j++)
@@ -1172,10 +1341,47 @@ function walk(dt) {
   var d = Math.sqrt(gx*gx + gy*gy) || 1;
   gx /= d; gy /= d;
 
+  /* the corridors are one tile wide and they run along the grid, which on the
+     page means they run corner to corner — so pushing exactly down one is more
+     than a thumb can be asked, and a push that is a few degrees out walks you
+     into a hedge. so the push is not used as a direction: it is used to pick a
+     way. of the four ways out of the tile she is standing in, she takes the
+     open one nearest to where she is pushing, walks down it, and is drawn onto
+     the middle of it as she goes. that is what gets her round a corner — she
+     lines up with the opening on her own before she reaches it. */
+  var cx = Math.floor(her.x), cy = Math.floor(her.y);
+  var bi = -1, bs = 0.12, i;
+  for (i = 0; i < 4; i++) {
+    var sc = gx * AX[i][0] + gy * AX[i][1];
+    if (sc <= bs) continue;
+    if (W_(cx + AX[i][0], cy + AX[i][1])) continue;    /* that way is hedge */
+    bs = sc; bi = i;
+  }
+  if (bi < 0) {
+    /* nothing open the way she is pushing. she leans on the nearest wall
+       instead of sliding off along one she did not ask for */
+    var lean = 0;
+    for (i = 0; i < 4; i++) {
+      var s2 = gx * AX[i][0] + gy * AX[i][1];
+      if (s2 > lean) { lean = s2; bi = i; }
+    }
+  }
+  var ux = AX[bi][0], uy = AX[bi][1];
   var sp = 2.9 * mag * dt;
-  var nx = her.x + gx * sp, ny = her.y + gy * sp;
-  if (!blocked(nx, her.y)) her.x = nx;
-  if (!blocked(her.x, ny)) her.y = ny;
+  var nx = her.x + ux * sp, ny = her.y + uy * sp;
+  if (!blocked(nx, ny)) { her.x = nx; her.y = ny; }
+
+  /* and onto the middle of it, across the way she is going */
+  var pull = 5.0 * mag * dt;
+  if (ux) {
+    var ty = cy + 0.5, dy2 = ty - her.y;
+    var stepY = Math.max(-pull, Math.min(pull, dy2));
+    if (Math.abs(dy2) > 0.003 && !blocked(her.x, her.y + stepY)) her.y += stepY;
+  } else {
+    var tx = cx + 0.5, dx2 = tx - her.x;
+    var stepX = Math.max(-pull, Math.min(pull, dx2));
+    if (Math.abs(dx2) > 0.003 && !blocked(her.x + stepX, her.y)) her.x += stepX;
+  }
 
   her.fx = her.fx * 0.86 + sx * 0.14;
   her.fy = her.fy * 0.86 + sy * 0.14;
@@ -1204,6 +1410,8 @@ function frame(ms) {
   var dt = Math.min(now - last, 0.05) || 0.016;
   last = now; time = now;
 
+  stirWind();
+  sfx.tick(dt, wind.s);
   walk(dt);
   if (stick.on || panel || keys['a'] || keys['d'] || keys['w'] || keys['s'])
     told = Math.min(1, told + dt * 0.9);
@@ -1229,6 +1437,7 @@ function frame(ms) {
   drawWorld(dt);
   g.restore();
 
+  drawWisps(dt);
   drawPlumes(dt);
 
   /* the night closes in at the corners */
@@ -1244,6 +1453,7 @@ function frame(ms) {
 resize();
 startRound();
 seedPlumes();
+seedWisps();
 requestAnimationFrame(frame);
 
 })();
