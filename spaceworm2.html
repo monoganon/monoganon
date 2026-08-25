@@ -90,27 +90,17 @@ body {
       50%      { transform: scale(1.12); }
     }
 
-    /* worm segments: positioned at 0,0 and moved with transforms */
-    .worm-segment {
+    /* The worm is one continuous stroked path, drawn on an SVG overlay. */
+    #worm-layer {
       position: absolute;
       top: 0;
       left: 0;
-      border-radius: 30%;
+      width: 100%;
+      height: 100%;
       z-index: 10;
-      will-change: transform;
-      background: radial-gradient(circle at 32% 28%,
-                  #9ef7ff 0%, #35c6e8 45%, #1a72b8 100%);
-      box-shadow: 0 0 6px rgba(90, 220, 255, 0.45),
-                  inset 0 0 6px rgba(255, 255, 255, 0.18);
-    }
-
-    .worm-segment.head {
-      border-radius: 42%;
-      z-index: 30;
-      background: radial-gradient(circle at 34% 26%,
-                  #ffffff 0%, #b8fbff 35%, #3fd8ff 70%, #1b8fd6 100%);
-      box-shadow: 0 0 14px rgba(120, 235, 255, 0.9),
-                  inset 0 0 8px rgba(255, 255, 255, 0.35);
+      pointer-events: none;
+      overflow: visible;
+      filter: drop-shadow(0 0 6px rgba(90, 220, 255, 0.5));
     }
 
     #game-over-container {
@@ -163,6 +153,19 @@ body {
 
 <div class="game-wrapper">
     <div id="game-container">
+        <svg id="worm-layer" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+            <defs>
+                <linearGradient id="worm-gradient" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#7ef0ff"/>
+                    <stop offset="55%" stop-color="#31bce6"/>
+                    <stop offset="100%" stop-color="#2287c9"/>
+                </linearGradient>
+            </defs>
+            <g id="worm-rim"></g>
+            <g id="worm-body"></g>
+            <g id="worm-ridge"></g>
+            <g id="worm-head"></g>
+        </svg>
         <img id="comet" class="game-object" src="https://monoganon.com/Images/comet.gif" alt="comet" >
     </div>
     <div id="numpad" style="display: none;">
@@ -238,51 +241,179 @@ let gameOverState = false; // Add this variable to keep track of the game state
     gameContainer.style.width = containerSize + 'px';
     gameContainer.style.height = containerSize + 'px';
 
-    // Rendered segments are pooled and reused rather than rebuilt every step,
-    // which is what made the old loop stutter.
-    const segmentPool = [];
+    const wormLayer = document.getElementById('worm-layer');
+    const rimGroup = document.getElementById('worm-rim');
+    const bodyGroup = document.getElementById('worm-body');
+    const ridgeGroup = document.getElementById('worm-ridge');
+    const headGroup = document.getElementById('worm-head');
 
-    const createSnakePart = () => {
-  const snakePart = document.createElement('div');
-  snakePart.className = 'worm-segment';
-  snakePart.style.width = tileSize + 'px';
-  snakePart.style.height = tileSize + 'px';
-  gameContainer.appendChild(snakePart);
-  return snakePart;
-};
+    wormLayer.setAttribute('viewBox', '0 0 ' + containerSize + ' ' + containerSize);
 
-// Each segment is slightly smaller and dimmer than the one in front of it,
-// so the worm tapers off towards the tail.
-const styleSegment = (el, index, total) => {
-  const t = total > 1 ? index / (total - 1) : 0;
-  const scale = 1 - t * 0.2;
-  const isHead = index === 0;
-  el.classList.toggle('head', isHead);
-  el.style.opacity = (1 - t * 0.3).toFixed(3);
-  return isHead ? 1 : scale;
-};
+    // Span the gradient across the board in user space, so a segment's colour
+    // comes from where it is rather than from the shape of its path.
+    const wormGradient = document.getElementById('worm-gradient');
+    wormGradient.setAttribute('x1', 0);
+    wormGradient.setAttribute('y1', 0);
+    wormGradient.setAttribute('x2', containerSize);
+    wormGradient.setAttribute('y2', containerSize);
 
-const renderSnake = () => {
-  while (segmentPool.length < snake.length) segmentPool.push(createSnakePart());
-  while (segmentPool.length > snake.length) segmentPool.pop().remove();
+    const bodyWidth = tileSize * 0.78;
+    const ridgeAmplitude = tileSize * 0.23;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
 
-  for (let i = 0; i < snake.length; i++) {
-    const el = segmentPool[i];
-    const part = snake[i];
-    const scale = styleSegment(el, i, snake.length);
+    // Previous grid positions, so a frame can draw the worm part-way between
+    // two steps instead of only on the step itself.
+    let prevSnake = snake.map(part => ({x: part.x, y: part.y}));
 
-    // A wrap across an edge is a teleport, not a slide - kill the tween for it.
-    const jumped = el.dataset.x === undefined ||
-      Math.abs(part.x - Number(el.dataset.x)) > tileSize ||
-      Math.abs(part.y - Number(el.dataset.y)) > tileSize;
+    const wrapCoord = (v) => ((v % containerSize) + containerSize) % containerSize;
 
-    el.style.transition = jumped ? 'none' : 'transform ' + stepDuration + 'ms linear';
-    el.style.transform =
-      'translate3d(' + part.x + 'px,' + part.y + 'px,0) scale(' + scale + ')';
-    el.dataset.x = part.x;
-    el.dataset.y = part.y;
-  }
-};
+    // Interpolate one segment, taking the short way round when it wraps an edge.
+    const lerpPart = (from, to, alpha) => {
+      let fx = from.x;
+      let fy = from.y;
+      if (to.x - fx > tileSize) fx += containerSize;
+      else if (to.x - fx < -tileSize) fx -= containerSize;
+      if (to.y - fy > tileSize) fy += containerSize;
+      else if (to.y - fy < -tileSize) fy -= containerSize;
+      return {
+        x: wrapCoord(fx + (to.x - fx) * alpha) + tileSize / 2,
+        y: wrapCoord(fy + (to.y - fy) * alpha) + tileSize / 2
+      };
+    };
+
+    // A body that wraps an edge is drawn as two runs rather than one line
+    // stretched back across the whole board.
+    const splitRuns = (points) => {
+      const runs = [];
+      let run = [points[0]];
+      for (let i = 1; i < points.length; i++) {
+        const far = Math.abs(points[i].x - points[i - 1].x) > tileSize * 1.5 ||
+                    Math.abs(points[i].y - points[i - 1].y) > tileSize * 1.5;
+        if (far) {
+          runs.push(run);
+          run = [];
+        }
+        run.push(points[i]);
+      }
+      runs.push(run);
+      return runs;
+    };
+
+    const lineThrough = (run) =>
+      run.map((pt, i) => (i ? 'L' : 'M') + pt.x.toFixed(1) + ' ' + pt.y.toFixed(1)).join(' ');
+
+    // Zigzag ridge: between each pair of body points, step out to a peak on
+    // alternating sides. The side depends on the index, so the pattern is
+    // fixed relative to the head and travels along with the worm.
+    const ridgeThrough = (run, offset) => {
+      if (run.length < 2) return '';
+      let d = 'M' + run[0].x.toFixed(1) + ' ' + run[0].y.toFixed(1);
+      for (let i = 0; i < run.length - 1; i++) {
+        const a = run[i];
+        const b = run[i + 1];
+        const vx = b.x - a.x;
+        const vy = b.y - a.y;
+        const len = Math.hypot(vx, vy) || 1;
+        const side = (i + offset) % 2 === 0 ? 1 : -1;
+        const peakX = (a.x + b.x) / 2 + (-vy / len) * ridgeAmplitude * side;
+        const peakY = (a.y + b.y) / 2 + (vx / len) * ridgeAmplitude * side;
+        d += ' L' + peakX.toFixed(1) + ' ' + peakY.toFixed(1) +
+             ' L' + b.x.toFixed(1) + ' ' + b.y.toFixed(1);
+      }
+      return d;
+    };
+
+    // Reuse child nodes across frames; only add or drop when the run count changes.
+    const syncChildren = (group, tag, count) => {
+      while (group.childNodes.length < count) {
+        group.appendChild(document.createElementNS(SVG_NS, tag));
+      }
+      while (group.childNodes.length > count) {
+        group.removeChild(group.lastChild);
+      }
+      return group.childNodes;
+    };
+
+    const paintRuns = (group, runs, toPath, attrs) => {
+      const nodes = syncChildren(group, 'path', runs.length);
+      runs.forEach((run, i) => {
+        const node = nodes[i];
+        node.setAttribute('d', toPath(run, i));
+        for (const key in attrs) node.setAttribute(key, attrs[key]);
+      });
+    };
+
+    const renderWorm = (alpha) => {
+      const points = snake.map((part, i) =>
+        lerpPart(prevSnake[i] || part, part, alpha));
+      const runs = splitRuns(points);
+
+      // Offset keeps the zigzag phase continuous across a split run.
+      let consumed = 0;
+      const ridgeOffsets = runs.map(run => {
+        const offset = consumed;
+        consumed += run.length - 1;
+        return offset;
+      });
+
+      paintRuns(rimGroup, runs, lineThrough, {
+        fill: 'none',
+        stroke: '#0d3f66',
+        'stroke-width': bodyWidth + 5,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      });
+
+      paintRuns(bodyGroup, runs, lineThrough, {
+        fill: 'none',
+        stroke: 'url(#worm-gradient)',
+        'stroke-width': bodyWidth,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round'
+      });
+
+      paintRuns(ridgeGroup, runs, (run, i) => ridgeThrough(run, ridgeOffsets[i]), {
+        fill: 'none',
+        stroke: '#d8fbff',
+        'stroke-width': Math.max(2, tileSize * 0.09),
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+        opacity: '0.85'
+      });
+
+      drawHead(points[0], points[1] || points[0]);
+    };
+
+    // Head is a slightly fatter cap with a pair of eyes facing the way it moves.
+    const drawHead = (head, neck) => {
+      const nodes = syncChildren(headGroup, 'circle', 3);
+      let vx = head.x - neck.x;
+      let vy = head.y - neck.y;
+      const len = Math.hypot(vx, vy);
+      if (len < 0.001) { vx = 1; vy = 0; } else { vx /= len; vy /= len; }
+
+      const skull = nodes[0];
+      skull.setAttribute('cx', head.x.toFixed(1));
+      skull.setAttribute('cy', head.y.toFixed(1));
+      skull.setAttribute('r', (bodyWidth / 2 + 2).toFixed(1));
+      skull.setAttribute('fill', 'url(#worm-gradient)');
+
+      const eyeOut = tileSize * 0.17;
+      const eyeFwd = tileSize * 0.12;
+      for (let i = 1; i <= 2; i++) {
+        const side = i === 1 ? 1 : -1;
+        const eye = nodes[i];
+        eye.setAttribute('cx', (head.x + vx * eyeFwd + -vy * eyeOut * side).toFixed(1));
+        eye.setAttribute('cy', (head.y + vy * eyeFwd + vx * eyeOut * side).toFixed(1));
+        eye.setAttribute('r', Math.max(1.5, tileSize * 0.07).toFixed(1));
+        eye.setAttribute('fill', '#06283d');
+      }
+    };
+
+    const resetWormTrail = () => {
+      prevSnake = snake.map(part => ({x: part.x, y: part.y}));
+      renderWorm(1);
+    };
 let isMouseDown = false;
 let mouseStartX;
 let mouseStartY;
@@ -440,6 +571,8 @@ const moveSnake = () => {
     queuedDirection = null;
   }
 
+  prevSnake = snake.map(part => ({x: part.x, y: part.y}));
+
   for (let i = 1; i < snake.length; i++) {
     if (snake[i].x === headX && snake[i].y === headY) {
       gameOver();
@@ -459,8 +592,6 @@ const moveSnake = () => {
 
   snake[0].x = headX;
   snake[0].y = headY;
-
-  renderSnake();
 
   changingDirection = false;
 };
@@ -485,6 +616,8 @@ const gameLoop = (now) => {
     moveSnake();
     if (gameOverState) return;
   }
+
+  renderWorm(stepAccumulator / stepDuration);
 };
 
 const startLoop = () => {
@@ -617,7 +750,7 @@ const restart = () => {
   queuedDirection = null;
   changingDirection = false;
   updateCometPosition();
-  renderSnake();
+  resetWormTrail();
   startTime = new Date().getTime(); // Reset the start time
   gameOverState = false;
   startLoop();
@@ -716,7 +849,7 @@ numpadButtons.forEach(button => {
   gameContainer.style.height = containerSize + 'px';
 
   updateCometPosition();
-  renderSnake();
+  resetWormTrail();
   startTime = new Date().getTime();
   startLoop();
 };
