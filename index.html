@@ -34,6 +34,14 @@
     background-image: url('Images/background.gif');
     background-repeat: repeat;
   }
+  /* the flags are doors. they lift a little when you go near them, so that
+     nobody walks past without noticing */
+  .flaglink { display: inline-block; line-height: 0; }
+  .flaglink img { transition: transform 0.35s ease, filter 0.35s ease; }
+  .flaglink:hover img, .flaglink:focus-visible img {
+    transform: translateY(-0.4vw) scale(1.05);
+    filter: drop-shadow(0 0 0.6vw rgba(255,255,255,0.55));
+  }
   </style>
   <main>
     <header class="header">
@@ -109,18 +117,35 @@
     <div class="container">
       <div class="centered">
         <div class="row">
-          <img src="Images/flag1.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
-          <img src="Images/flag2.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
+          <!-- every flag is a record, and every one opens in its own tab so
+               nobody is carried out of here by accident -->
+          <a class="flaglink" href="https://lostmap.bandcamp.com/album/v-i-s-i-t-t-i-o-n-s-0-1-0-1"
+             target="_blank" rel="noopener noreferrer" title="V I S I T T I O N S 0101 — Lost Map">
+            <img src="Images/flag1.gif" alt="Vietnamese flag: V I S I T T I O N S 0101 on Lost Map" style="width:10vw; height:auto;">
+          </a>
+          <a class="flaglink" href="https://www.normanrecords.com/records/134111-monoganon-songs-to-swim-to"
+             target="_blank" rel="noopener noreferrer" title="Songs To Swim To — Norman Records">
+            <img src="Images/flag2.gif" alt="Catalan flag: Songs To Swim To at Norman Records" style="width:10vw; height:auto;">
+          </a>
           <div class="container">
             <audio autoplay loop preload="auto" src="sounds/nasa.mp3"></audio>
             <audio autoplay loop preload="auto" src="sounds/nasa.mp3" id="audioElement"></audio>
             <audio autoplay loop preload="auto" src="sounds/nasa.mp3" id="audioElement"></audio>
             <button onclick="document.getElementById('audioElement').paused ? document.getElementById('audioElement').play() : document.getElementById('audioElement').pause(); this.innerHTML = document.getElementById('audioElement').paused ? 'Play' : 'Stop'">Play</button>
 
-            <img src="Images/ogram.png" alt="ogram runes spelling monoganon" style="width:15vw; height:auto;">
+            <a class="flaglink" href="https://devonanon.bandcamp.com/album/richard-john"
+               target="_blank" rel="noopener noreferrer" title="Devonanon — Richard John">
+              <img src="Images/ogram.png" alt="ogham runes spelling monoganon: Devonanon, Richard John" style="width:15vw; height:auto;">
+            </a>
           </div>
-          <img src="Images/flag3.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
-      <img src="Images/flag4.gif" alt="an animated flag of a country" style="width:10vw; height:auto;">
+          <a class="flaglink" href="https://lostmap.bandcamp.com/album/f-a-m-i-l-y"
+             target="_blank" rel="noopener noreferrer" title="F A M I L Y — Lost Map">
+            <img src="Images/flag3.gif" alt="Scottish flag: F A M I L Y on Lost Map" style="width:10vw; height:auto;">
+          </a>
+          <a class="flaglink" href="https://goodvibesrecords.co/products/monoganon-killmens-lp?variant=57153159987582"
+             target="_blank" rel="noopener noreferrer" title="KILLMENS LP — Good Vibes Records">
+            <img src="Images/flag4.gif" alt="Swedish flag: KILLMENS LP at Good Vibes Records" style="width:10vw; height:auto;">
+          </a>
     </div>
   </div>
 </div>
