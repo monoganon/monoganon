@@ -70,11 +70,11 @@ var VERT_QUAD =
    in the calm middle of the screen there is almost no trail at all          */
 var FRAG_FEED =
   'precision highp float;varying vec2 vUv;' +
-  'uniform sampler2D uPrev;uniform vec2 uHole;' +
+  'uniform sampler2D uPrev;uniform vec2 uHole,uVanish;' +
   'uniform float uAspect,uSwirl,uLens;' +
   'void main(){' +
   '  vec2 asp=vec2(uAspect,1.0);' +
-  '  vec2 c=vec2(0.5);' +
+  '  vec2 c=uVanish;' +
   /* --- streaks, edges only. the smear has to travel AGAINST the star, so the
          tail is left behind it: stars fly outward, so the residue drifts back
          toward the vanishing point. (matching their motion puts the tail in
@@ -358,6 +358,12 @@ function rebirth(i, deep) {
   else bornPlain(i, deep);
 }
 
+/* where the sky is coming from. the stars stream out of this point and their
+   trails are dragged back toward it, so it has to be the place the last speck
+   of light was born, not the middle of the page: otherwise the field looks as
+   though there is a second hole sitting in the centre of the screen. */
+var vanish = { x: 0.5, y: 0.5 };
+
 var hole = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
 var target = { x: 0.5, y: 0.5 };
 var dragging = false, spin = 1;
@@ -426,6 +432,12 @@ function release(e) {
 }
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('lostpointercapture', release);
+/* released off the edge of the canvas, or outside the window entirely, and the
+   canvas never hears about it. the window does */
+window.addEventListener('pointerup', release);
+window.addEventListener('pointercancel', release);
+window.addEventListener('blur', function () { ptrId = null; dragging = false; });
 
 /* ------------------------------------------------------------------ audio */
 
@@ -798,8 +810,8 @@ function space(dt) {
 
       if (wz < NEAR) { verts[o] = -2; verts[o+1] = -2; verts[o+2] = 0; verts[o+3] = 1; continue; }
       var iz = 1 / wz;
-      x = 0.5 + wx * iz * FOV / aspect;
-      y = 0.5 + wy * iz * FOV;
+      x = vanish.x + wx * iz * FOV / aspect;
+      y = vanish.y + wy * iz * FOV;
       if (x < -0.4 || x > 1.4 || y < -0.4 || y > 1.4) {
         if (l === i) rebirth(i, true);
         verts[o] = -2; verts[o+1] = -2; verts[o+2] = 0; verts[o+3] = 1; continue;
@@ -864,6 +876,7 @@ function space(dt) {
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[src]);
   gl.uniform1i(gl.getUniformLocation(progFeed, 'uPrev'), 0);
   gl.uniform2f(gl.getUniformLocation(progFeed, 'uHole'), hole.x, hole.y);
+  gl.uniform2f(gl.getUniformLocation(progFeed, 'uVanish'), vanish.x, vanish.y);
   gl.uniform1f(gl.getUniformLocation(progFeed, 'uAspect'), aspect);
   gl.uniform1f(gl.getUniformLocation(progFeed, 'uSwirl'), spin);
   gl.uniform1f(gl.getUniformLocation(progFeed, 'uLens'), R_LENS);
@@ -916,6 +929,7 @@ function space(dt) {
 
 function bang(nx, ny) {
   hole.x = nx; hole.y = ny; hole.vx = 0; hole.vy = 0;
+  vanish.x = nx; vanish.y = ny;          /* the sky comes out of it from here */
   target.x = nx; target.y = ny; dragging = false;
 
   grow = 0; S = S_START;
@@ -1015,7 +1029,7 @@ var web = (function () {
     for (i = 0; i < legs.length; i++) {
       L = legs[i];
       if (L.up > 0) {
-        L.up = Math.max(0, L.up - dt * 3.4);
+        L.up = Math.max(0, L.up - dt * 5.2);
         var q = 1 - L.up;                        /* 0 at lift, 1 at touchdown */
         var e = q * q * (3 - 2 * q);
         L.x = L.fx + (L.tx - L.fx) * e;
@@ -1024,13 +1038,17 @@ var web = (function () {
       }
       footIdeal(L, _fi);
       var dx = _fi[0] - L.x, dy = _fi[1] - L.y;
-      if (dx*dx + dy*dy > (7.5 * U) * (7.5 * U) && lifted < 3 &&
-          legs[(i + 4) % 8].up <= 0) {
+      var far = dx*dx + dy*dy;
+      /* a foot that has been left this far behind is being dragged, and the leg
+         reads as limp. it comes up whatever the rest of them are doing */
+      var forced = far > (15 * U) * (15 * U);
+      if (far > (6.5 * U) * (6.5 * U) &&
+          (forced || (lifted < 3 && legs[(i + 4) % 8].up <= 0))) {
         L.fx = L.x; L.fy = L.y;
         /* she puts it down a little ahead of where it wanted to go */
         L.tx = _fi[0] + Math.cos(spider.a) * 3.4 * U + rand(-1.4, 1.4) * U;
         L.ty = _fi[1] + Math.sin(spider.a) * 3.4 * U + rand(-1.4, 1.4) * U;
-        L.up = 1; lifted++;
+        L.up = 1; if (!forced) lifted++;
       }
     }
   }
@@ -1107,7 +1125,8 @@ var web = (function () {
     }
     spider.x = Math.max(m, Math.min(W - m, spider.x));
     spider.y = Math.max(m, Math.min(H - m, spider.y));
-   plantFeet();
+    if (spider.state === SWING) landed();    /* the page moved; let go of it */
+    plantFeet();
   }
 
   /* ---- the specks. they drift on the same curl noise as the dust does */
@@ -1191,7 +1210,7 @@ var web = (function () {
     return true;
   }
 
-  var HEIGHTS = [0.80, 0.62, 0.46, 0.34, 0.24];
+  var HEIGHTS = [0.80, 0.62, 0.46, 0.34, 0.24, 0.17, 0.11];
   function trySwing(m, d) {
     if (d < 130 * U) return false;
     /* the anchor sits square above the middle of the gap, the same distance
@@ -1209,6 +1228,10 @@ var web = (function () {
       var a0 = Math.atan2(dy, dx);
       var t1 = Math.atan2(m.y - ay, m.x - ax);
       var a1 = a0 + Math.atan2(Math.sin(t1 - a0), Math.cos(t1 - a0));
+      /* the anchor has to be on the page as well, or the wire runs off to
+         nothing and the arc it describes is nobody's business */
+      var am = 8 * U;
+      if (ax < am || ax > W - am || ay < am || ay > H - am) continue;
       if (!arcFits(ax, ay, r, a0, a1)) continue;
       swing.ax = ax; swing.ay = ay; swing.r = r; swing.a0 = a0; swing.a1 = a1;
       swing.q = 0; swing.dur = 0.85 + d / (620 * U);
@@ -1217,6 +1240,12 @@ var web = (function () {
       return true;
     }
     return false;                       /* nowhere to hang it. she walks */
+  }
+
+  /* one crossing, then she is on foot again until the next knot is tied */
+  function landed() {
+    spider.state = WALK; tuck = 0; swing.cool = 1e9;
+    plantFeet();
   }
 
   function swinging(dt) {
@@ -1230,19 +1259,18 @@ var web = (function () {
     }
     tuck = Math.min(1, tuck + dt * 4);
     swing.q += dt / swing.dur;
-    if (swing.q >= 1) {
-      /* one crossing, then she is on foot again until the next knot is tied */
-      spider.state = WALK; tuck = 0; swing.cool = 1e9;
-      plantFeet();
-      return;
-    }
+    if (swing.q >= 1) { landed(); return; }
     /* a pendulum: slow off the top, quickest through the bottom of the arc */
     var e = 0.5 - 0.5 * Math.cos(Math.PI * swing.q);
     var a = swing.a0 + (swing.a1 - swing.a0) * e;
     var r = swing.r * (1 - 0.10 * Math.sin(Math.PI * swing.q));
-    var mg = 12 * U;                    /* the arc may not take her off the page */
-    spider.x = Math.max(mg, Math.min(W - mg, swing.ax + Math.cos(a) * r));
-    spider.y = Math.max(mg, Math.min(H - mg, swing.ay + Math.sin(a) * r));
+    var nx = swing.ax + Math.cos(a) * r, ny = swing.ay + Math.sin(a) * r;
+    /* the arc was checked against the page before she stepped off, but the page
+       can change under her — a phone hiding its address bar is a resize. if the
+       swing would take her off it now, she lets go and lands where she is */
+    var mg = 11 * U;
+    if (nx < mg || nx > W - mg || ny < mg || ny > H - mg) { landed(); return; }
+    spider.x = nx; spider.y = ny;
     spider.a = a + (swing.a1 > swing.a0 ? Math.PI / 2 : -Math.PI / 2);
     spider.step += dt * 3;
   }
@@ -1389,7 +1417,7 @@ var web = (function () {
       var nx = -dy / len, ny = dx / len;
       var slack = len * (0.050 + 0.075 * Math.sin(t * 0.55 + st.s)) * (1 - taut * 0.94);
       var wob   = len * 0.055 * (1 - taut * 0.94);
-      g.strokeStyle = 'rgba(0,0,0,' + (0.10 + 0.18 * a.dark).toFixed(3) + ')';
+      g.strokeStyle = 'rgba(96,110,138,' + (0.14 + 0.26 * a.dark).toFixed(3) + ')';
       g.lineWidth = (0.7 + 0.5 * a.dark) * U;
       g.beginPath();
       for (var q = 0; q <= SEG; q++) {
@@ -1411,31 +1439,44 @@ var web = (function () {
      out of focus: nearly clear through the middle, thickest a good way out,
      and blurred into the page from there. drawn twice, a wide soft one under a
      tighter one, with a real blur under both of them. */
+  /* a speck is a cold blue-grey, and there is very little of it: it is more a
+     thickening of the light than a thing sitting in front of it. tying one
+     darkens it and takes the blue out. no edge anywhere — the alpha is small
+     everywhere and only ever creeps toward the far side of it. */
+  function tone(d, a) {
+    /* pale blue-grey, going slate as it is tied */
+    var r = Math.round(124 - 66 * d),
+        gg = Math.round(142 - 72 * d),
+        bl = Math.round(178 - 78 * d);
+    return 'rgba(' + r + ',' + gg + ',' + bl + ',' + a.toFixed(3) + ')';
+  }
+
   function drawMotes() {
     g.save();
     for (var i = 0; i < motes.length; i++) {
       var m = motes[i];
       var d = m.dark;
-      var R = m.r * U * (2.5 - 0.35 * d);
-      var hx = m.x - R * 0.22, hy = m.y - R * 0.26;   /* the light is up there */
+      var R = m.r * U * (2.7 - 0.30 * d);
+      var hx = m.x - R * 0.26, hy = m.y - R * 0.30;   /* the light is up there */
 
-      g.shadowColor = 'rgba(0,0,0,' + (0.05 + 0.16 * d).toFixed(3) + ')';
-      g.shadowBlur = R * (1.5 - 0.45 * d);
+      g.shadowColor = tone(d, 0.16 + 0.26 * d);
+      g.shadowBlur = R * (1.9 - 0.5 * d);
 
-      /* the halo it sits in */
-      var go = g.createRadialGradient(hx, hy, R * 0.05, m.x, m.y, R * 1.55);
-      go.addColorStop(0.00, 'rgba(0,0,0,0)');
-      go.addColorStop(0.55, 'rgba(0,0,0,' + (0.030 + 0.075 * d).toFixed(3) + ')');
-      go.addColorStop(1.00, 'rgba(0,0,0,0)');
+      /* the air it thickens, well outside itself */
+      var go = g.createRadialGradient(hx, hy, R * 0.05, m.x, m.y, R * 1.9);
+      go.addColorStop(0.00, tone(d, 0));
+      go.addColorStop(0.50, tone(d, 0.090 + 0.150 * d));
+      go.addColorStop(1.00, tone(d, 0));
       g.fillStyle = go;
-      g.beginPath(); g.arc(m.x, m.y, R * 1.55, 0, TWO); g.fill();
+      g.beginPath(); g.arc(m.x, m.y, R * 1.9, 0, TWO); g.fill();
 
-      /* and the body of it */
+      /* and the body of it, such as it is */
       var gi = g.createRadialGradient(hx, hy, R * 0.04, m.x, m.y, R);
-      gi.addColorStop(0.00, 'rgba(0,0,0,' + (0.030 + 0.150 * d).toFixed(3) + ')');
-      gi.addColorStop(0.45, 'rgba(0,0,0,' + (0.140 + 0.420 * d).toFixed(3) + ')');
-      gi.addColorStop(0.74, 'rgba(0,0,0,' + (0.185 + 0.500 * d).toFixed(3) + ')');
-      gi.addColorStop(1.00, 'rgba(0,0,0,0)');
+      gi.addColorStop(0.00, tone(d, 0.020 + 0.160 * d));
+      gi.addColorStop(0.40, tone(d, 0.135 + 0.360 * d));
+      gi.addColorStop(0.70, tone(d, 0.235 + 0.480 * d));
+      gi.addColorStop(0.88, tone(d, 0.160 + 0.370 * d));
+      gi.addColorStop(1.00, tone(d, 0));
       g.fillStyle = gi;
       g.beginPath(); g.arc(m.x, m.y, R, 0, TWO); g.fill();
     }
@@ -1543,6 +1584,10 @@ var web = (function () {
   }
   cv.addEventListener('pointerup', drop);
   cv.addEventListener('pointercancel', drop);
+  cv.addEventListener('lostpointercapture', drop);
+  window.addEventListener('pointerup', drop);
+  window.addEventListener('pointercancel', drop);
+  window.addEventListener('blur', function () { ptr.id = null; ptr.down = false; grab = -1; });
 
   spider.s = Math.random() * 900;
 
