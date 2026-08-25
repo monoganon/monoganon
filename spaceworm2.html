@@ -108,12 +108,92 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color:antiquewhite;
+  color: antiquewhite;
   display: block;
   text-align: center;
   font-size: 2vmax;
   z-index: 100;
 }
+
+.panel {
+  font-family: 'Courier New', Courier, monospace;
+  background: rgba(4, 16, 28, 0.92);
+  border: 1px solid rgba(120, 220, 255, 0.55);
+  border-radius: 8px;
+  box-shadow: 0 0 30px rgba(60, 180, 255, 0.28);
+  padding: 1.2em 1.6em;
+  min-width: 12em;
+}
+
+.panel h2 {
+  margin: 0 0 0.6em;
+  letter-spacing: 0.12em;
+  color: #8bebff;
+  font-size: 1.1em;
+}
+
+.panel .run-score {
+  margin: 0 0 1em;
+  font-size: 1.3em;
+  color: #ffffff;
+}
+
+.panel .hint {
+  margin: 1em 0 0;
+  font-size: 0.6em;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+
+#score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75em;
+  letter-spacing: 0.1em;
+}
+
+#score-table td {
+  padding: 0.18em 0.5em;
+  white-space: nowrap;
+}
+
+#score-table .rank { text-align: left; opacity: 0.5; }
+#score-table .who  { text-align: left; }
+#score-table .pts  { text-align: right; }
+
+#score-table tr.you td {
+  color: #8bebff;
+  text-shadow: 0 0 8px rgba(120, 220, 255, 0.8);
+}
+
+.name-slots {
+  font-size: 2em;
+  letter-spacing: 0.35em;
+  margin: 0.4em 0;
+  color: #ffffff;
+}
+
+.name-slots .caret {
+  color: #8bebff;
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink { to { opacity: 0.2; } }
+
+#name-ok {
+  margin-top: 0.8em;
+  font-family: inherit;
+  font-size: 0.8em;
+  letter-spacing: 0.2em;
+  padding: 0.5em 1.6em;
+  color: #04121e;
+  background: #8bebff;
+  border: 0;
+  border-radius: 5px;
+  font-weight: bold;
+}
+
+#name-ok[disabled] { opacity: 0.35; }
 
 
         @media only screen and (max-width: 600px) {
@@ -618,95 +698,277 @@ const stopLoop = () => {
 };
 
 
-const saveScore = () => {
-  const playerName = document.getElementById('player-name').value;
-  const elapsedTime = parseInt(document.getElementById('elapsed-time').innerText);
-  const score = parseInt(document.getElementById('final-score').innerText);
 
-  const storedScores = localStorage.getItem('scores');
-  const scores = storedScores ? JSON.parse(storedScores) : [];
 
-  scores.push({ name: playerName, score: score, time: elapsedTime });
-  localStorage.setItem('scores', JSON.stringify(scores));
 
-  updateScoreboard();
-};
 
-const updateScoreboard = () => {
-  const scoreList = document.getElementById('score-list');
-  scoreList.innerHTML = '';
 
-  const storedScores = localStorage.getItem('scores');
-  const scores = storedScores ? JSON.parse(storedScores) : [];
 
-  for (const { name, score } of scores) {
-    const listItem = document.createElement('li');
-    listItem.textContent = `${name}: ${score}`;
-    scoreList.appendChild(listItem);
+
+
+
+// ---------------------------------------------------------------------------
+// High scores. There is no backend behind monoganon.com (GitHub Pages serves
+// static files only), so the table is seeded with fixed entries and the
+// player's own runs are kept in this browser's localStorage.
+// ---------------------------------------------------------------------------
+
+const SCORE_KEY = 'spaceworm2-highscores';
+const BOARD_SIZE = 7;
+const POINTS_PER_COMET = 100;
+
+const SEEDED_SCORES = [
+  {name: 'PEZ', score: 18700},
+  {name: 'GAV', score: 9900},
+  {name: 'JON', score: 7300},
+  {name: 'KAT', score: 5100},
+  {name: 'DEB', score: 3800},
+  {name: 'LOZ', score: 2400},
+  {name: 'WOT', score: 700}
+];
+
+const cometsEaten = () => Math.max(0, snake.length - 4);
+const currentScore = () => cometsEaten() * POINTS_PER_COMET;
+
+const tidyName = (value) =>
+  String(value || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+
+const loadScores = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SCORE_KEY));
+    if (!Array.isArray(stored)) return SEEDED_SCORES.slice();
+
+    const clean = stored
+      .filter(row => row && tidyName(row.name) && Number.isFinite(Number(row.score)))
+      .map(row => ({name: tidyName(row.name), score: Math.floor(Number(row.score))}));
+
+    return clean.length ? clean.slice(0, BOARD_SIZE) : SEEDED_SCORES.slice();
+  } catch (err) {
+    // Private browsing, disabled storage, corrupted JSON: fall back to seeds.
+    return SEEDED_SCORES.slice();
   }
 };
 
-const showGameOver = () => {
-  const gameoverContainer = document.getElementById('game-over-container');
-  if (!gameoverContainer) {
-    return;
+const saveScores = (scores) => {
+  try {
+    localStorage.setItem(SCORE_KEY, JSON.stringify(scores));
+  } catch (err) {
+    // Nothing to do if the browser refuses to store it; the table still shows.
   }
+};
 
-  gameoverContainer.innerHTML = ''; // Clear the contents of the container
+let scores = loadScores();
 
-  const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+const madeTheBoard = (score) =>
+  score > 0 && (scores.length < BOARD_SIZE || score > scores[scores.length - 1].score);
 
-  const gameOverMessage = document.createElement('h2');
-  gameOverMessage.innerText = 'Game Over!';
-  gameoverContainer.appendChild(gameOverMessage);
+// Insert the run, knocking the bottom entry off the board.
+const recordScore = (name, score) => {
+  const entry = {name: name, score: score, mine: true};
+  scores = scores.concat([entry])
+    .sort((a, b) => b.score - a.score)
+    .slice(0, BOARD_SIZE);
+  saveScores(scores.map(row => ({name: row.name, score: row.score})));
+  return entry;
+};
 
-  const finalScoreMessage = document.createElement('p');
-  const score = (snake.length - 3) * 7;
-  finalScoreMessage.innerHTML = `Score: ${score}`;
-  gameoverContainer.appendChild(finalScoreMessage);
+const gameoverContainer = document.getElementById('game-over-container');
 
-  const elapsedTimeMessage = document.createElement('p');
-  elapsedTimeMessage.innerHTML = `Elapsed time: ${elapsedTime} seconds`;
-  gameoverContainer.appendChild(elapsedTimeMessage);
+const showScoreboard = (justScored) => {
+  gameoverContainer.innerHTML = '';
+
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+
+  const heading = document.createElement('h2');
+  heading.innerText = justScored ? 'HIGH SCORE' : 'GAME OVER';
+  panel.appendChild(heading);
+
+  const runScore = document.createElement('p');
+  runScore.className = 'run-score';
+  runScore.innerText = currentScore().toLocaleString();
+  panel.appendChild(runScore);
+
+  const table = document.createElement('table');
+  table.id = 'score-table';
+  scores.forEach((row, i) => {
+    const tr = document.createElement('tr');
+    if (row === justScored) tr.className = 'you';
+
+    const rank = document.createElement('td');
+    rank.className = 'rank';
+    rank.innerText = (i + 1) + '.';
+
+    const who = document.createElement('td');
+    who.className = 'who';
+    who.innerText = row.name;
+
+    const pts = document.createElement('td');
+    pts.className = 'pts';
+    pts.innerText = row.score.toLocaleString();
+
+    tr.appendChild(rank);
+    tr.appendChild(who);
+    tr.appendChild(pts);
+    table.appendChild(tr);
+  });
+  panel.appendChild(table);
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.innerText = isMobile ? 'TAP A KEY TO PLAY AGAIN' : 'PRESS ANY KEY TO PLAY AGAIN';
+  panel.appendChild(hint);
+
+  gameoverContainer.appendChild(panel);
   gameoverContainer.style.display = 'block';
 };
 
+// --- Nokia-style multi-tap name entry -------------------------------------
 
+const T9_LETTERS = {
+  '2': 'ABC', '3': 'DEF', '4': 'GHI', '5': 'JKL',
+  '6': 'MNO', '7': 'PQRS', '8': 'TUV', '9': 'WXYZ'
+};
+const MULTITAP_TIMEOUT = 900;
 
+let nameEntryActive = false;
+let nameChars = [];
+let tapKey = null;
+let tapIndex = 0;
+let tapTimer = null;
+
+const lockTap = () => {
+  clearTimeout(tapTimer);
+  tapKey = null;
+};
+
+const drawName = () => {
+  const slots = document.getElementById('name-slots');
+  const ok = document.getElementById('name-ok');
+  if (!slots) return;
+
+  slots.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const span = document.createElement('span');
+    if (i < nameChars.length) {
+      span.innerText = nameChars[i];
+    } else {
+      span.innerText = '_';
+      if (i === nameChars.length) span.className = 'caret';
+    }
+    slots.appendChild(span);
+  }
+  if (ok) ok.disabled = nameChars.length === 0;
+};
+
+// One key press of the on-screen phone keypad.
+const t9Press = (key) => {
+  if (!nameEntryActive) return;
+
+  if (key === '1') { // delete
+    lockTap();
+    nameChars.pop();
+    drawName();
+    return;
+  }
+
+  const letters = T9_LETTERS[key];
+  if (!letters) return;
+
+  if (key === tapKey && nameChars.length) {
+    // Same key again before the timeout: cycle through its letters.
+    tapIndex = (tapIndex + 1) % letters.length;
+    nameChars[nameChars.length - 1] = letters[tapIndex];
+  } else {
+    if (nameChars.length >= 3) return;
+    tapKey = key;
+    tapIndex = 0;
+    nameChars.push(letters[0]);
+  }
+
+  clearTimeout(tapTimer);
+  tapTimer = setTimeout(lockTap, MULTITAP_TIMEOUT);
+  drawName();
+};
+
+const typeLetter = (letter) => {
+  if (!nameEntryActive || nameChars.length >= 3) return;
+  lockTap();
+  nameChars.push(letter);
+  drawName();
+};
+
+const submitName = () => {
+  if (!nameEntryActive || !nameChars.length) return;
+  lockTap();
+  nameEntryActive = false;
+  const entry = recordScore(nameChars.join(''), currentScore());
+  showScoreboard(entry);
+};
+
+const showNameEntry = () => {
+  nameEntryActive = true;
+  nameChars = [];
+  lockTap();
+
+  gameoverContainer.innerHTML = '';
+
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+
+  const heading = document.createElement('h2');
+  heading.innerText = 'NEW HIGH SCORE';
+  panel.appendChild(heading);
+
+  const runScore = document.createElement('p');
+  runScore.className = 'run-score';
+  runScore.innerText = currentScore().toLocaleString();
+  panel.appendChild(runScore);
+
+  const slots = document.createElement('div');
+  slots.className = 'name-slots';
+  slots.id = 'name-slots';
+  panel.appendChild(slots);
+
+  const ok = document.createElement('button');
+  ok.id = 'name-ok';
+  ok.innerText = 'OK';
+  ok.addEventListener('click', submitName);
+  ok.addEventListener('touchstart', (event) => {
+    event.preventDefault();
+    submitName();
+  }, {passive: false});
+  panel.appendChild(ok);
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.innerText = isMobile
+    ? 'TAP 2-9 FOR LETTERS  \u00B7  1 DELETES'
+    : 'TYPE 3 LETTERS  \u00B7  ENTER TO CONFIRM';
+  panel.appendChild(hint);
+
+  gameoverContainer.appendChild(panel);
+  gameoverContainer.style.display = 'block';
+  drawName();
+};
 
 const gameOver = () => {
     gameOverState = true;
   stopLoop();
   navigator.vibrate(200)
   
-  const gameoverContainer = document.getElementById('game-over-container');
-  gameoverContainer.innerHTML = ''; // Clear the container's content
-
-  const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
-  const score = (snake.length - 1) * elapsedTime;
-
-  const gameOverMessage = document.createElement('h2');
-  gameOverMessage.innerText = 'Game Over!';
-  gameoverContainer.appendChild(gameOverMessage);
-
-  const finalScoreMessage = document.createElement('p');
-  finalScoreMessage.innerHTML = `Score: ${score}`;
-  gameoverContainer.appendChild(finalScoreMessage);
-
-  const elapsedTimeMessage = document.createElement('p');
-  elapsedTimeMessage.innerHTML = `Elapsed time: ${elapsedTime} seconds`;
-  gameoverContainer.appendChild(elapsedTimeMessage);
-
-  const restartMessage = document.createElement('p');
-  restartMessage.innerHTML = 'Press any key to restart the game';
-  gameoverContainer.appendChild(restartMessage);
-
-  gameoverContainer.style.display = 'block';
+  if (madeTheBoard(currentScore())) {
+    showNameEntry();
+  } else {
+    showScoreboard(null);
+  }
 };
 
 let lastRestart = 0;
 
 const restart = () => {
+  if (nameEntryActive) return; // still typing a name
+
   const currentTime = new Date().getTime();
   const timeSinceLastRestart = currentTime - lastRestart;
 
@@ -718,7 +980,6 @@ const restart = () => {
 
   stopLoop();
 
-  const gameoverContainer = document.getElementById('game-over-container');
   gameoverContainer.style.display = 'none'; // Hide the game-over message
 
   // Reinitialize the snake array
@@ -743,6 +1004,15 @@ const restart = () => {
 
 
 document.addEventListener('keydown', function (event) {
+  if (nameEntryActive) {
+    if (event.key === 'Enter') submitName();
+    else if (event.key === 'Backspace') { nameChars.pop(); drawName(); }
+    else if (/^[a-zA-Z]$/.test(event.key)) typeLetter(event.key.toUpperCase());
+    else if (T9_LETTERS[event.key] || event.key === '1') t9Press(event.key);
+    event.preventDefault();
+    return;
+  }
+
   if (gameOverState) {
     setTimeout(restart, restartDelay);
     return;
@@ -764,12 +1034,20 @@ if (isMobile) {
   const numpadButtons = document.querySelectorAll('.numpad-button');
 
   const handleNumpadInput = (event) => {
+  navigator.vibrate(20)
+
+  // During name entry the same keypad becomes a phone keypad.
+  if (nameEntryActive) {
+    event.preventDefault();
+    t9Press(event.target.value);
+    return;
+  }
+
   if (gameOverState) {
     setTimeout(restart, restartDelay);
     return;
   }
 
-  navigator.vibrate(20)
   queueDirection(event.target.getAttribute('data-direction'));
 };
 
@@ -803,7 +1081,6 @@ numpadButtons.forEach(button => {
 
     initializeGame();
 
-    // document.getElementById('save-score').addEventListener('click', saveScore);
   </script>
 </body>
 </html>
