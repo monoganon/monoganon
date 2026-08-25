@@ -420,15 +420,21 @@ canvas.addEventListener('pointerdown', function (e) {
   audio.start(); audio.resume();
 });
 canvas.addEventListener('pointermove', function (e) {
-  if (dragging && e.pointerId === ptrId) pointer(e);
+  if (!dragging || e.pointerId !== ptrId) return;
+  /* no button held: it was let go of somewhere we never heard about */
+  if (e.pointerType === 'mouse' && e.buttons === 0) { letGoHole(); return; }
+  pointer(e);
 });
-function release(e) {
-  if (e.pointerId !== ptrId) return;
+function letGoHole() {
   ptrId = null;
   if (!dragging) return;
   dragging = false;
   /* let go while moving and it sails off, wrapping round the screen */
   hole.vx += ptrVel.x * 9; hole.vy += ptrVel.y * 9;
+}
+function release(e) {
+  if (e.pointerId !== ptrId) return;
+  letGoHole();
 }
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -438,6 +444,9 @@ canvas.addEventListener('lostpointercapture', release);
 window.addEventListener('pointerup', release);
 window.addEventListener('pointercancel', release);
 window.addEventListener('blur', function () { ptrId = null; dragging = false; });
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) { ptrId = null; dragging = false; }
+});
 
 /* ------------------------------------------------------------------ audio */
 
@@ -1576,18 +1585,30 @@ var web = (function () {
     grab = nearestFree(ptr.x, ptr.y, 110 * U);
   });
   cv.addEventListener('pointermove', function (e) {
-    if (ptr.down && e.pointerId === ptr.id) at(e);
+    if (!ptr.down || e.pointerId !== ptr.id) return;
+    /* a mouse back over the page with no button held was let go of somewhere
+       we never heard about — over the browser's own chrome, say, or under a
+       context menu. let go of the speck too, or it follows the mouse for good */
+    if (e.pointerType === 'mouse' && e.buttons === 0) { letGo(); return; }
+    at(e);
   });
-  function drop(e) {
+  function letGo() { ptr.id = null; ptr.down = false; grab = -1; }
+  /* NOT named drop: the thread she comes down on is called that, and the var
+     overwrites the hoisted function before any of this is wired up, so every
+     one of these listeners gets a plain object and never fires */
+  function letGoOf(e) {
     if (e.pointerId !== ptr.id) return;
-    ptr.id = null; ptr.down = false; grab = -1;
+    letGo();
   }
-  cv.addEventListener('pointerup', drop);
-  cv.addEventListener('pointercancel', drop);
-  cv.addEventListener('lostpointercapture', drop);
-  window.addEventListener('pointerup', drop);
-  window.addEventListener('pointercancel', drop);
-  window.addEventListener('blur', function () { ptr.id = null; ptr.down = false; grab = -1; });
+  cv.addEventListener('pointerup', letGoOf);
+  cv.addEventListener('pointercancel', letGoOf);
+  cv.addEventListener('lostpointercapture', letGoOf);
+  window.addEventListener('pointerup', letGoOf);
+  window.addEventListener('pointercancel', letGoOf);
+  window.addEventListener('blur', letGo);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) letGo();          /* the tab went away mid-drag */
+  });
 
   spider.s = Math.random() * 900;
 
