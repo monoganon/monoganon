@@ -529,6 +529,9 @@ var sound = (function () {
     catch_:function () { ping(300, 150, 0.22, 'sine', 0.13); },
     miss:  function () { ping(150, 90, 0.5, 'sine', 0.06); },
     part:  function () { rush(0.5, 0.05, 3200, 1400); },
+    spike: function () { ping(160, 40, 0.45, 'sawtooth', 0.16); rush(0.5, 0.13, 1800, 200); },
+    wrap:  function () { rush(1.1, 0.14, 2400, 700); ping(300, 90, 1.2, 'triangle', 0.09); },
+    drain: function () { rush(3.4, 0.13, 400, 40); ping(70, 44, 3.4, 'sine', 0.12); },
     tear:  function () { rush(0.8, 0.20, 2600, 300); ping(220, 60, 0.8, 'sawtooth', 0.10); },
     mend:  function () { ping(420, 840, 0.9, 'sine', 0.07); },
     pass:  function (p) { rush(1.9, 0.09, 380, 120); ping(90, 62, 1.6, 'triangle', 0.05, p); },
@@ -552,12 +555,12 @@ function rng(seed) {
   return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
 
-var nodes = [], doors = [], seed = 1;
+var nodes = [], doors = [], spikes = [], seed = 1;
 
 function grow(sd) {
   seed = sd;
   var r = rng(sd);
-  nodes.length = 0; doors.length = 0;
+  nodes.length = 0; doors.length = 0; spikes.length = 0;
   /* a way up rather than a field of things to grab at. each one is within a
      throw of the one below it, so there is always a route; now and then there
      is a second one off to the side, so there is something to decide. with a
@@ -586,6 +589,26 @@ function grow(sd) {
   /* and the doors across it */
   for (var d = 2.4; d < TOP - 1.2; d += 2.5 + r() * 1.1)
     doors.push({ y: d, torn: 0, mend: 0, s: r() * 900 });
+  /* and the wall is not a soft place to be pushed against. a band of them on
+     one side or the other, so that being swung into a wall costs something and
+     the one who can see has a wall worth mentioning. */
+  for (var k = 1.6; k < TOP - 0.6; k += 1.9 + r() * 2.4) {
+    var side = r() < 0.5 ? 0 : 1;
+    spikes.push({ y: k, h: 0.22 + r() * 0.30, side: side, s: r() * 900 });
+  }
+}
+
+/* how far into the shaft the spikes reach at a given height, 0 if none */
+function spikeAt(y, side) {
+  for (var i = 0; i < spikes.length; i++) {
+    var k = spikes[i];
+    if (k.side !== side) continue;
+    var t = (y - k.y) / k.h;
+    if (t < 0 || t > 1) continue;
+    /* blunt at the ends of the band and deepest in the middle */
+    return Math.sin(t * Math.PI) * 0.030;
+  }
+  return 0;
 }
 
 /* ---------------------------------------------------------------- the two
@@ -615,14 +638,73 @@ var SIGHT_LO = 0.26, SIGHT_HI = 1.05;
    on your own is worth nothing as a test if it is not the real one. */
 function climber(x, y) {
   return { x: x, y: y, vx: 0, vy: 0, hook: -1, len: HANG, still: 1,
-           sight: SIGHT_LO, shot: null, sx: x, sy: y, was: [], think: 0 };
+           sight: SIGHT_LO, shot: null, sx: x, sy: y, was: [], think: 0,
+           hurt: 0, wrapped: 0 };
 }
 
 var A = climber(0.35, 0.5), B = climber(0.65, 0.5);
 var me = A, you = B;
 var host = false, live = false, solo = false;
 var run = { n: 0, phase: 'wait', why: '', dread: 0, over: 0, high: 0, best: 0 };
-var spider = { on: 0, x: 0.5, y: 0, vy: 0, hunt: 0, look: 0 };
+var spider = { on: 0, x: 0.5, y: 0, vy: 0, hunt: 0, look: 0,
+               a: Math.PI * 0.5, px: 0.5, py: 0, feed: 0, prey: null };
+
+/* her legs, the same eight as the ones on the black hole. each foot is put
+   somewhere and stays there until the body has walked far enough off it to
+   have to pick it up, which is the whole of the gait; the knee is then
+   wherever two bones have to bend to reach a foot that is already down.
+   they are kept in world units so that the camera moving does not drag them
+   along the floor with it. */
+var SIT   = [0.62, 1.22, 1.98, 2.62];   /* where each leg sits, front to back */
+var REACH = [26.0, 29.0, 27.0, 22.0];   /* and how far out, in pixels */
+var legs = [];
+for (var _s = -1; _s <= 1; _s += 2)
+  for (var _k = 0; _k < 4; _k++)
+    legs.push({ s: _s, k: _k, x: 0, y: 0, fx: 0, fy: 0, tx: 0, ty: 0, up: 0,
+                w: (_k * 0.5 + (_s > 0 ? 0.25 : 0)) });
+
+var _fi = [0, 0];
+function footIdeal(L, out) {
+  /* never quite still: even stopped, the feet fidget */
+  var an = spider.a + L.s * SIT[L.k] + Math.sin(time * 1.1 + L.w * 5.1) * 0.05;
+  var re = REACH[L.k] + Math.sin(time * 0.9 + L.w * 3.7) * 1.0;
+  out[0] = spider.x + Math.cos(an) * re * U / W;
+  out[1] = spider.y - Math.sin(an) * re * U / H;
+}
+function plantFeet() {
+  for (var i = 0; i < legs.length; i++) {
+    footIdeal(legs[i], _fi);
+    legs[i].x = legs[i].fx = _fi[0]; legs[i].y = legs[i].fy = _fi[1];
+    legs[i].up = 0;
+  }
+}
+/* no more than three off the ground at once, and never both of a pair */
+function walkLegs(dt) {
+  var lifted = 0, i, L;
+  for (i = 0; i < legs.length; i++) if (legs[i].up > 0) lifted++;
+  for (i = 0; i < legs.length; i++) {
+    L = legs[i];
+    if (L.up > 0) {
+      L.up = Math.max(0, L.up - dt * 4.4);
+      var q = 1 - L.up, e = q * q * (3 - 2 * q);
+      L.x = L.fx + (L.tx - L.fx) * e;
+      L.y = L.fy + (L.ty - L.fy) * e;
+      continue;
+    }
+    footIdeal(L, _fi);
+    var dx = (_fi[0] - L.x) * W / U, dy = (_fi[1] - L.y) * H / U;
+    var far = dx * dx + dy * dy;
+    /* a foot left this far behind is being dragged and the leg reads as limp.
+       it comes up whatever the others are doing. */
+    var forced = far > 28 * 28;
+    if (far > 12 * 12 && (forced || (lifted < 3 && legs[(i + 4) % 8].up <= 0))) {
+      L.fx = L.x; L.fy = L.y;
+      L.tx = _fi[0] + Math.cos(spider.a) * 5.5 * U / W;
+      L.ty = _fi[1] - Math.sin(spider.a) * 5.5 * U / H;
+      L.up = 1; if (!forced) lifted++;
+    }
+  }
+}
 
 function begin(sd) {
   run.n++; run.phase = 'climb'; run.why = ''; run.over = 0; run.dread = 0; run.high = 0;
@@ -631,6 +713,8 @@ function begin(sd) {
   for (var k in a) { A[k] = a[k]; B[k] = b[k]; }
   B.x = 0.65; B.sx = 0.65;
   spider.on = 0; spider.hunt = 0; spider.y = TOP + 3;
+  spider.feed = 0; spider.prey = null;
+  A.wrapped = B.wrapped = 0; A.hurt = B.hurt = 0;
 }
 
 function lose(why) {
@@ -704,8 +788,19 @@ function hold(a, o) {
   tie(a, o.sx, o.sy, ROPE);
 }
 
+function bitten(a) {
+  if (a.hurt > 0) return;                 /* it only bites once on the way in */
+  a.hurt = 0.9;
+  a.hook = -1; a.len = HANG;
+  a.vy -= 0.25;
+  run.dread = Math.min(1, run.dread + 0.18);
+  if (a === me) sound.spike();
+}
+
 function step(a, o, dt) {
   var i;
+  a.hurt = Math.max(0, a.hurt - dt);
+  if (a === me) leanStep(a, dt);
   flyShot(a, dt);
 
   a.vy -= G * dt;
@@ -729,8 +824,18 @@ function step(a, o, dt) {
      couple of times over rather than one of them winning outright */
   hold(a, o); hold(a, o);
 
-  if (a.x < LEFT) { a.x = LEFT; a.vx = Math.abs(a.vx) * 0.3; }
-  if (a.x > RIGHT) { a.x = RIGHT; a.vx = -Math.abs(a.vx) * 0.3; }
+  /* the walls, and what is on them. a spike does not kill you — it takes the
+     line you were hanging from, throws you off, and makes enough noise to be
+     worth her walking over for. the wall is a cost, not an ending. */
+  var lsp = LEFT + spikeAt(a.y, 0), rsp = RIGHT - spikeAt(a.y, 1);
+  if (a.x < lsp) {
+    if (lsp > LEFT + 0.001 && a.vx < -0.05) bitten(a);
+    a.x = lsp; a.vx = Math.abs(a.vx) * (lsp > LEFT + 0.001 ? 0.8 : 0.3);
+  }
+  if (a.x > rsp) {
+    if (rsp < RIGHT - 0.001 && a.vx > 0.05) bitten(a);
+    a.x = rsp; a.vx = -Math.abs(a.vx) * (rsp < RIGHT - 0.001 ? 0.8 : 0.3);
+  }
   if (a.y < 0.2) { a.y = 0.2; a.vy = Math.max(0, a.vy); }
 
   /* how still you are, and therefore how much of it you can see */
@@ -811,7 +916,25 @@ function brain(a, o, dt) {
 var passIn = 9;
 function herStep(dt) {
   if (run.phase !== 'climb') return;
+
+  /* she is eating. nothing else about her matters until she is done. */
+  if (spider.feed > 0) {
+    spider.feed += dt;
+    var pr = spider.prey;
+    if (pr) {
+      pr.x += (spider.x - pr.x) * Math.min(1, dt * 6);
+      pr.y += (spider.y - 0.080 - pr.y) * Math.min(1, dt * 6);
+      pr.vx = pr.vy = 0; pr.hook = -1;
+      pr.wrapped = Math.min(1, spider.feed / 2.2);
+    }
+    if (spider.feed > 1.1 && spider.feed - dt <= 1.1 && pr === me) sound.drain();
+    if (spider.feed > 5.0) lose('she had you');
+    walkLegs(dt);
+    return;
+  }
+
   var top = run.high > TOP - 4.5;
+  spider.px = spider.x; spider.py = spider.y;
 
   if (!top) {
     passIn -= dt * (1 + run.dread);
@@ -819,38 +942,58 @@ function herStep(dt) {
       spider.on = 1; spider.y = me.y + 0.35 + Math.random() * 0.5;
       spider.x = Math.random() < 0.5 ? LEFT - 0.1 : RIGHT + 0.1;
       spider.vy = (Math.random() - 0.5) * 0.1;
+      plantFeet();
       sound.pass(spider.x < 0.5 ? -0.8 : 0.8);
-      passIn = 14 + Math.random() * 12;
     }
     if (spider.on) {
       spider.x += (spider.x < 0.5 ? 1 : -1) * 0.42 * dt;
       spider.y += spider.vy * dt;
-      /* moving while she is in the room is noticed */
-      var sp = Math.sqrt(me.vx*me.vx + me.vy*me.vy);
-      if (sp > STILL * 2 && Math.abs(spider.y - me.y) < 0.7)
-        run.dread = Math.min(1, run.dread + dt * 0.22);
-      if (spider.x < LEFT - 0.2 || spider.x > RIGHT + 0.2) spider.on = 0;
+      touch(me); if (solo) touch(you);
+      if (spider.x < LEFT - 0.2 || spider.x > RIGHT + 0.2) { spider.on = 0; passIn = 9 + Math.random() * 8; }
     }
+    face(dt); walkLegs(dt);
     return;
   }
 
-  /* the top. she is on the rope now and she is looking for whichever of you
-     is making it move */
   spider.on = 2;
   if (spider.y > TOP + 2.4) spider.y = TOP + 2.4;
-  var mySp = Math.sqrt(me.vx*me.vx + me.vy*me.vy) + (me.shot ? 0.5 : 0);
-  var yrSp = Math.abs(you.vx) + Math.abs(you.vy);
-  var loud = mySp > yrSp ? 1 : -1;
-  var tx = loud > 0 ? me.x : you.sx, ty = loud > 0 ? me.y : you.sy;
-  var noise = Math.max(mySp, yrSp);
+  var mySp = Math.sqrt(me.vx * me.vx + me.vy * me.vy);
+  var noise = mySp + (sound.heard() ? 0.02 : 0);
+  var loud = Math.max(0, Math.min(1, noise / 0.5));
+  var tx = me.x, ty = me.y + 0.12;
   spider.hunt += (noise > STILL ? 1 : -0.6) * dt;
   spider.hunt = Math.max(0, Math.min(1, spider.hunt));
   var chase = (0.30 + 0.9 * run.dread) * spider.hunt;
   spider.x += (tx - spider.x) * chase * dt;
   spider.y += (ty - spider.y) * chase * dt * 1.4;
   spider.look = loud;
-  if (Math.abs(spider.y - me.y) < 0.07 && Math.abs(spider.x - me.x) < 0.06 && mySp > STILL)
-    lose('she found you');
+  touch(me); if (solo) touch(you);
+  face(dt); walkLegs(dt);
+}
+
+/* which way she is pointing: down the way she is going, and she turns into it
+   rather than snapping round */
+function face(dt) {
+  var dx = (spider.x - spider.px) * W, dy = -(spider.y - spider.py) * H;
+  if (dx * dx + dy * dy > 0.02) {
+    var want = Math.atan2(dy, dx);
+    var d = want - spider.a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    spider.a += d * Math.min(1, dt * 3.5);
+  }
+}
+
+/* run into her and she does not kill you, she keeps you. you are wound up
+   where you are, hung off her as a fat pale node, and drained. */
+function touch(a) {
+  if (spider.feed > 0 || !spider.on) return;
+  var dx = (a.x - spider.x) * W, dy = (a.y - spider.y) * H;
+  if (dx * dx + dy * dy > (30 * U) * (30 * U)) return;
+  spider.feed = 0.0001; spider.prey = a;
+  a.wrapped = 0.01; a.hook = -1; a.shot = null;
+  run.dread = 1;
+  sound.wrap();
 }
 
 /* -------------------------------------------------------------- the frame */
@@ -937,6 +1080,28 @@ function draw() {
     g.fillRect(i ? sx(wx) : sx(wx) - 30 * U, 0, 30 * U, H);
   }
 
+  /* the spikes, which you can only see once you are close enough to the wall
+     to be in some trouble already */
+  for (i = 0; i < spikes.length; i++) {
+    var kk = spikes[i];
+    if (Math.abs(kk.y - me.y) > 1.4) continue;
+    var wx2 = kk.side ? RIGHT : LEFT, dir = kk.side ? -1 : 1;
+    a = Math.max(0, 1 - Math.abs(wx2 - me.x) / (me.sight * 1.5)) *
+        Math.max(0, 1 - Math.abs(kk.y - me.y) / 1.4);
+    if (a <= 0.02) continue;
+    g.strokeStyle = 'rgba(196,206,228,' + (a * 0.72).toFixed(3) + ')';
+    g.lineWidth = 1 * U;
+    g.beginPath();
+    for (var kq = 0; kq <= 14; kq++) {
+      var kt = kq / 14, ky2 = sy(kk.y + kk.h * kt);
+      var out = Math.sin(kt * Math.PI) * 0.030;
+      var tip = (kq % 2) ? out : out * 0.25;
+      if (kq === 0) g.moveTo(sx(wx2), ky2);
+      else g.lineTo(sx(wx2 + dir * tip), ky2);
+    }
+    g.stroke();
+  }
+
   /* the doors */
   for (i = 0; i < doors.length; i++) {
     var dr = doors[i];
@@ -973,13 +1138,19 @@ function draw() {
     a = fade(n.y, n.x);
     if (i === me.hook) a = Math.max(a, 0.85);
     if (a <= 0.02) continue;
+    /* they were all breathing on the same beat, which made a row of them read
+       as one blinking object rather than as several separate things hanging in
+       the dark. each one now has its own phase and its own rate, both taken
+       from the seed it was grown with, so they drift in and out of step. */
+    var pulse = 0.80 + 0.20 * Math.sin(time * (0.55 + (n.s % 7) * 0.11) + n.s);
+    a *= pulse;
     var nx = sx(n.x), ny = sy(n.y);
-    var ng = g.createRadialGradient(nx, ny, 0, nx, ny, 20 * U);
+    var ng = g.createRadialGradient(nx, ny, 0, nx, ny, (18 + 4 * pulse) * U);
     ng.addColorStop(0, 'rgba(214,230,255,' + (a * 0.95).toFixed(3) + ')');
     ng.addColorStop(0.3, 'rgba(160,184,224,' + (a * 0.34).toFixed(3) + ')');
     ng.addColorStop(1, 'rgba(120,140,180,0)');
     g.fillStyle = ng;
-    g.beginPath(); g.arc(nx, ny, 20 * U, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(nx, ny, (18 + 4 * pulse) * U, 0, Math.PI * 2); g.fill();
     g.fillStyle = 'rgba(236,246,255,' + Math.min(1, a * 1.1).toFixed(3) + ')';
     g.beginPath(); g.arc(nx, ny, 2.6 * U, 0, Math.PI * 2); g.fill();
   }
@@ -992,6 +1163,16 @@ function draw() {
     g.strokeStyle = 'rgba(190,208,240,0.5)';
     g.lineWidth = 1.1 * U;
     g.beginPath(); g.moveTo(mx, my); g.lineTo(sx(hn.x), sy(hn.y)); g.stroke();
+  }
+
+  /* the lean, when there is any: a weight on one side of you */
+  if (run.phase === 'climb' && Math.abs(lean.want) > 0.05 && me.hook >= 0) {
+    var lw = Math.abs(lean.want), lsd = lean.want > 0 ? 1 : -1;
+    var lg = g.createRadialGradient(mx + lsd * 26 * U, my, 0, mx + lsd * 26 * U, my, 30 * U);
+    lg.addColorStop(0, 'rgba(190,212,255,' + (lw * 0.20).toFixed(3) + ')');
+    lg.addColorStop(1, 'rgba(190,212,255,0)');
+    g.fillStyle = lg;
+    g.beginPath(); g.arc(mx + lsd * 26 * U, my, 30 * U, 0, Math.PI * 2); g.fill();
   }
 
   /* the cast, in the air */
@@ -1033,6 +1214,10 @@ function draw() {
     g.strokeStyle = 'rgba(180,196,226,' + (sa * 0.25).toFixed(3) + ')';
     g.lineWidth = 0.8 * U;
     g.beginPath(); g.moveTo(spx, spy - 400 * U); g.lineTo(spx, spy); g.stroke();
+    /* the bundle hangs under her and she stands over it, so it goes down
+       first and she is drawn on top of what she is holding */
+    if (spider.feed > 0 && spider.prey)
+      drawWrapped(sx(spider.prey.x), sy(spider.prey.y), spider.prey.wrapped, sa);
     drawHer(spx, spy, sa);
   }
 
@@ -1089,7 +1274,6 @@ function draw() {
   g.beginPath(); g.arc(mx, my, 2.4 * U, 0, Math.PI * 2); g.fill();
 
   drawSling();
-  drawTalk();
   drawWords();
 
   /* the panel is out of the way by now, so anything that goes wrong with the
@@ -1112,22 +1296,56 @@ function draw() {
   }
 }
 
-var LEG = [0.55, 1.15, 1.95, 2.62];
+/* two bones to a leg, and the knee is wherever it has to be to reach a foot
+   that is already on the floor. a leg in the air folds tighter, which throws
+   its knee up and out, and that is what makes it look like walking. */
 function drawHer(cx, cy, a) {
-  g.strokeStyle = 'rgba(226,236,255,' + (a * 0.8).toFixed(3) + ')';
-  g.lineWidth = 0.9 * U;
-  for (var s = -1; s <= 1; s += 2)
-    for (var k = 0; k < 4; k++) {
-      var ph = time * 2.2 + k * 0.8 + (s > 0 ? 1.6 : 0);
-      var base = Math.PI * 0.5 + s * (LEG[k] + Math.sin(ph) * 0.2);
-      var kx = cx + Math.cos(base) * 7 * U, ky = cy + Math.sin(base) * 7 * U;
-      var knee = base + s * (0.7 + Math.cos(ph) * 0.25);
-      g.beginPath(); g.moveTo(cx, cy); g.lineTo(kx, ky);
-      g.lineTo(kx + Math.cos(knee) * 8 * U, ky + Math.sin(knee) * 8 * U); g.stroke();
-    }
+  g.lineCap = 'round';
+  for (var i = 0; i < legs.length; i++) {
+    var L = legs[i];
+    var hip = spider.a + L.s * SIT[L.k] * 0.45;
+    var hx = cx + Math.cos(hip) * 4.2 * U, hy = cy - Math.sin(hip) * 4.2 * U;
+    var L1 = 13.5 * U * (1 + 0.30 * (L.up > 0 ? Math.sin(Math.PI * (1 - L.up)) : 0));
+    var L2 = 17.5 * U;
+    var dx = sx(L.x) - hx, dy = sy(L.y) - hy;
+    var raw = Math.sqrt(dx * dx + dy * dy) || 1e-3;
+    var d = Math.min(raw, (L1 + L2) * 0.995);
+    var ux = dx / raw, uy = dy / raw;
+    var m = (d * d + L1 * L1 - L2 * L2) / (2 * d);
+    var h = Math.sqrt(Math.max(0, L1 * L1 - m * m));
+    var kx = hx + ux * m - uy * h * L.s;
+    var ky = hy + uy * m + ux * h * L.s;
+    g.strokeStyle = 'rgba(226,236,255,' + (a * (L.up > 0 ? 0.5 : 0.8)).toFixed(3) + ')';
+    g.lineWidth = (L.up > 0 ? 0.8 : 1.05) * U;
+    g.beginPath(); g.moveTo(hx, hy); g.lineTo(kx, ky);
+    g.lineTo(hx + ux * d, hy + uy * d); g.stroke();
+  }
+  var ca = Math.cos(spider.a), sa2 = -Math.sin(spider.a);
   g.fillStyle = 'rgba(232,242,255,' + a.toFixed(3) + ')';
-  g.beginPath(); g.ellipse(cx, cy + 3 * U, 5 * U, 4.2 * U, 0, 0, Math.PI * 2); g.fill();
-  g.beginPath(); g.ellipse(cx, cy - 2.6 * U, 3 * U, 2.6 * U, 0, 0, Math.PI * 2); g.fill();
+  g.save(); g.translate(cx, cy); g.rotate(Math.atan2(sa2, ca));
+  g.beginPath(); g.ellipse(-7.4 * U, 0, 8.6 * U, 7.0 * U, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(4.2 * U, 0, 5.0 * U, 4.3 * U, 0, 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+
+/* what is left of whoever she caught: a bundle of silk with a shape in it,
+   going out as she takes it */
+function drawWrapped(cx, cy, w, a) {
+  var r = (7 + 9 * w) * U;
+  var wg = g.createRadialGradient(cx, cy, 0, cx, cy, r * 1.9);
+  wg.addColorStop(0, 'rgba(238,246,255,' + (a * (0.55 - 0.34 * w)).toFixed(3) + ')');
+  wg.addColorStop(0.5, 'rgba(206,222,250,' + (a * 0.28 * (1 - w * 0.5)).toFixed(3) + ')');
+  wg.addColorStop(1, 'rgba(180,200,235,0)');
+  g.fillStyle = wg;
+  g.beginPath(); g.arc(cx, cy, r * 1.9, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(240,248,255,' + (a * 0.5).toFixed(3) + ')';
+  g.lineWidth = 0.8 * U;
+  for (var q = 0; q < 9; q++) {
+    var ph = q * 0.7 + w * 5;
+    g.beginPath();
+    g.ellipse(cx, cy, r * (0.45 + q * 0.07), r * (0.9 - q * 0.02), ph, 0, Math.PI * 2);
+    g.stroke();
+  }
 }
 
 function drawWords() {
@@ -1166,11 +1384,8 @@ function drawWords() {
 /* ----------------------------------------------------------- the controls */
 
 var sling = { on: false, id: null, ox: 0, oy: 0, x: 0, y: 0 };
-var talk = { id: null, held: false, latch: false, down: 0, tapAt: 0 };
 var SLING_R = 78;
 
-function talkPos() { return [W - 66 * U, H - 74 * U]; }
-function talking() { return talk.held || talk.latch; }
 
 function drawSling() {
   if (!sling.on) {
@@ -1206,27 +1421,64 @@ function drawSling() {
   g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + ux * L, my + uy * L); g.stroke();
 }
 
-function drawTalk() {
-  var p = talkPos(), r = 26 * U * (1 - talk.down * 0.07);
-  var on = talking();
-  g.strokeStyle = on ? 'rgba(226,238,255,0.55)' : 'rgba(120,140,175,0.22)';
-  g.lineWidth = 1.3 * U;
-  g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.stroke();
-  if (talk.latch) {
-    g.fillStyle = 'rgba(226,238,255,0.10)';
-    g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.fill();
-  }
-  g.font = (9 * U) + 'px "Courier New",courier,monospace';
-  g.textAlign = 'center';
-  g.fillStyle = on ? 'rgba(226,238,255,0.75)' : 'rgba(120,140,175,0.40)';
-  g.fillText(talk.latch ? 'OPEN' : (talk.held ? 'ON' : 'MUTE'), p[0], p[1] + 3 * U);
-}
-
+/* the microphone is simply live. there was a button for holding it open and
+   another state for muting, and both of them were one more thing to think
+   about while hanging off a rope in the dark. talking is the whole game. */
 function setMic() {
   var s = wire.mic();
   if (!s) return;
   var t = s.getAudioTracks()[0];
-  if (t) t.enabled = talking();
+  if (t) t.enabled = true;
+}
+
+/* --------------------------------------------------------------- the lean
+
+   a prototype. hanging off a node you are a pendulum, and a pendulum is
+   worked by leaning into it — so the phone's own tilt drives a sideways push,
+   and the arrow keys do the same thing for anyone at a desk.
+
+   safari will not hand out the tilt until it has been asked for in a real
+   gesture and the page is on https, so there is a button for it rather than
+   an event listener that silently never fires. everything else just works.  */
+
+var lean = { on: 0, g: 0, want: 0, zero: null, asked: 0, keys: 0 };
+var LEAN = 1.6;                 /* how hard a full lean pushes                */
+var LEAN_MAX = 34;              /* degrees, past which it is already full on  */
+
+function leanRead(e) {
+  if (e.gamma === null || e.gamma === undefined) return;
+  /* in portrait, gamma is the left-to-right tilt. whatever it is resting at
+     when the first reading comes in is called upright, so it works lying down
+     in bed as well as sitting up. */
+  if (lean.zero === null) lean.zero = e.gamma;
+  lean.g = Math.max(-1, Math.min(1, (e.gamma - lean.zero) / LEAN_MAX));
+  lean.on = 1;
+}
+
+function askLean() {
+  if (lean.asked) return; lean.asked = 1;
+  var D = window.DeviceOrientationEvent;
+  if (!D) return;
+  if (typeof D.requestPermission === 'function')
+    D.requestPermission().then(function (r) {
+      if (r === 'granted') window.addEventListener('deviceorientation', leanRead);
+    }, function () {});
+  else window.addEventListener('deviceorientation', leanRead);
+}
+
+/* the push itself. it only bites while you are hanging off something, which
+   is the only time you are a pendulum, and it is strongest across the line
+   rather than along it — leaning does nothing at the bottom of a rope you are
+   already lying along. */
+function leanStep(a, dt) {
+  var want = lean.keys || (lean.on ? lean.g : 0);
+  lean.want += (want - lean.want) * Math.min(1, dt * 8);
+  if (a.hook < 0 || Math.abs(lean.want) < 0.02) return;
+  /* just a sideways push. working out the tangent by hand got the sign wrong
+     as soon as you swung past the node, and there is no need for it: the line
+     you are hanging on already takes out everything that would stretch it, so
+     a plain shove to the side comes out as a swing on its own. */
+  a.vx += lean.want * LEAN * dt;
 }
 
 /* ------------------------------------------------------------------ input */
@@ -1235,16 +1487,8 @@ function pt(e, out) { out[0] = e.clientX * DPR; out[1] = e.clientY * DPR; }
 var _p = [0, 0];
 
 canvas.addEventListener('pointerdown', function (e) {
-  sound.start(); sound.resume();
+  sound.start(); sound.resume(); askLean();
   pt(e, _p);
-  var tp = talkPos();
-  var dx = _p[0] - tp[0], dy = _p[1] - tp[1];
-  if (dx*dx + dy*dy < (40 * U) * (40 * U)) {
-    talk.id = e.pointerId; talk.down = 1; talk.held = true; talk.tapAt = time;
-    setMic();
-    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
-    return;
-  }
   if (run.phase !== 'climb') { go(); return; }
   if (me.shot) return;
   sling.on = true; sling.id = e.pointerId;
@@ -1259,12 +1503,6 @@ canvas.addEventListener('pointermove', function (e) {
 });
 
 function release(e) {
-  if (e.pointerId === talk.id) {
-    talk.id = null; talk.down = 0; talk.held = false;
-    /* a tap latches it open, and the next tap shuts it again */
-    if (time - talk.tapAt < 0.28) talk.latch = !talk.latch;
-    setMic();
-  }
   if (e.pointerId === sling.id && sling.on) {
     var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
     var d = Math.sqrt(dx*dx + dy*dy);
@@ -1284,15 +1522,20 @@ canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('lostpointercapture', release);
 window.addEventListener('pointerup', release);
 window.addEventListener('blur', function () {
-  sling.on = false; sling.id = null; talk.id = null; talk.held = false; setMic();
+  sling.on = false; sling.id = null;
 });
 
 document.addEventListener('keydown', function (e) {
   sound.start(); sound.resume();
   if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); go(); }
-  if (e.key.toLowerCase() === 'm') { talk.latch = !talk.latch; setMic(); }
+  if (e.key === 'ArrowLeft') { lean.keys = -1; e.preventDefault(); }
+  if (e.key === 'ArrowRight') { lean.keys = 1; e.preventDefault(); }
   if (e.key === 'Tab') { e.preventDefault(); swap(); }
   if (e.key.toLowerCase() === 'k' && solo) showAll = !showAll;
+});
+document.addEventListener('keyup', function (e) {
+  if (e.key === 'ArrowLeft' && lean.keys < 0) lean.keys = 0;
+  if (e.key === 'ArrowRight' && lean.keys > 0) lean.keys = 0;
 });
 var showAll = false;
 
@@ -1430,11 +1673,12 @@ grow(1);
 requestAnimationFrame(frame);
 
 /* for driving two of these against each other */
-window.__ascend = { wire: wire, run: run, nodes: nodes, doors: doors,
+window.__ascend = { wire: wire, run: run, nodes: nodes, doors: doors, spikes: spikes,
+                    lean: lean, legs: legs,
                     get me() { return me; }, get you() { return you; },
                     spider: spider, sound: sound, cast: cast,
                     live: function () { return live; }, host: function () { return host; },
-                    talking: talking, shot: function () { return me.shot; },
+                    shot: function () { return me.shot; },
                     A: A, B: B, alone: alone, swap: swap,
                     solo: function () { return solo; } };
 
