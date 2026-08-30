@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>The Thread</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
+               font-family:"Courier New",courier,monospace; color:#c9d2e0; }
+  canvas { position:fixed; left:0; top:0; display:block; width:100vw; height:100vh;
+           touch-action:none; }
+
+  /* the way in. two people, no server, so the introduction is done by hand */
+  #panel { position:fixed; left:0; top:0; right:0; bottom:0; display:flex;
+           align-items:center; justify-content:center; background:#000; z-index:2; }
+  #panel.gone { display:none; }
+  .card { width:min(92vw, 640px); }
+  h1 { font-size:13px; letter-spacing:0.5em; text-transform:uppercase;
+       font-weight:normal; margin:0 0 1.6em 0; color:#7f8b9e; }
+  p  { font-size:12px; line-height:1.9; color:#8d97a8; margin:0 0 1.4em 0; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button { font:inherit; font-size:11px; letter-spacing:0.28em; text-transform:uppercase;
+           color:#c9d2e0; background:transparent; border:1px solid #39424f;
+           padding:11px 16px; cursor:pointer; transition:border-color .25s, color .25s; }
+  button:hover { border-color:#8d97a8; color:#fff; }
+  button:disabled { opacity:0.3; cursor:default; }
+  textarea { width:100%; box-sizing:border-box; height:88px; resize:none; margin:0 0 12px 0;
+             font:inherit; font-size:10px; line-height:1.5; color:#8d97a8;
+             background:#07080b; border:1px solid #232a34; padding:10px; }
+  .step { display:none; }
+  .step.on { display:block; }
+  .note { color:#5c6675; font-size:11px; }
+  a { color:#8d97a8; }
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+
+<div id="panel">
+  <div class="card">
+    <h1>The Thread</h1>
+
+    <div class="step on" id="s-start">
+      <p>Two of you, tied together in the dark, on a line.<br>
+         You will not be able to see each other. You will feel each other through
+         the thread, and hear each other, and that is all.</p>
+      <p class="note">Nothing runs in between. To be joined you must pass a piece of
+         text back and forth once, by whatever way you already talk.</p>
+      <div class="row">
+        <button id="b-host">Open a thread</button>
+        <button id="b-join">Take a thread</button>
+      </div>
+    </div>
+
+    <div class="step" id="s-host">
+      <p>Send this to them.</p>
+      <textarea id="t-offer" readonly></textarea>
+      <div class="row" style="margin-bottom:22px">
+        <button id="b-copy1">Copy</button>
+      </div>
+      <p>They will send one back. Put it here.</p>
+      <textarea id="t-answer" placeholder="paste their reply"></textarea>
+      <div class="row"><button id="b-tie">Tie it</button></div>
+    </div>
+
+    <div class="step" id="s-join">
+      <p>Put theirs here.</p>
+      <textarea id="t-in" placeholder="paste what they sent"></textarea>
+      <div class="row"><button id="b-take">Take it</button></div>
+    </div>
+
+    <div class="step" id="s-reply">
+      <p>Send this back to them, and wait.</p>
+      <textarea id="t-reply" readonly></textarea>
+      <div class="row"><button id="b-copy2">Copy</button></div>
+    </div>
+
+    <p class="note" id="say" style="margin-top:22px"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+var canvas = document.getElementById('v');
+var g = canvas.getContext('2d');
+var panel = document.getElementById('panel');
+var say = document.getElementById('say');
+
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+var W = 1, H = 1, U = 1;
+
+function tell(s) { say.textContent = s; }
+function show(id) {
+  var steps = document.querySelectorAll('.step');
+  for (var i = 0; i < steps.length; i++) steps[i].className = 'step' + (steps[i].id === id ? ' on' : '');
+}
+
+/* ------------------------------------------------------------------- wire
+
+   no server anywhere. the two browsers cannot find each other on their own,
+   so the introduction is carried by hand: one of them makes a lump of text,
+   the other answers with one, and after that they are talking directly.
+
+   the first lump is kept small by leaving the voice out of it. once the data
+   channel is open the microphones are added over that, so the thing you have
+   to paste stays short enough to send in a message.                        */
+
+var wire = (function () {
+  var pc = null, dc = null, cc = null, mine = null, role = null;
+  var onMsg = null, onUp = null, onVoice = null;
+  var waiting = [];
+
+  var ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] }];
+
+  function bytesToB64(b) {
+    var s = '', CH = 0x8000;
+    for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
+    return btoa(s);
+  }
+  function b64ToBytes(s) {
+    var raw = atob(s), b = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
+    return b;
+  }
+
+  /* the description of a connection is long and very repetitive, which is
+     exactly what deflate is for. it comes down to about a quarter */
+  async function pack(o) {
+    var json = JSON.stringify(o);
+    if (window.CompressionStream) {
+      try {
+        var cs = new CompressionStream('deflate-raw');
+        var buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
+        return 'T1' + bytesToB64(new Uint8Array(buf));
+      } catch (e) { /* fall through */ }
+    }
+    return 'T0' + bytesToB64(new TextEncoder().encode(json));
+  }
+  async function unpack(s) {
+    s = (s || '').replace(/\s+/g, '');
+    var tag = s.slice(0, 2), body = s.slice(2);
+    if (tag !== 'T0' && tag !== 'T1') throw new Error('that does not look like a thread');
+    var bytes = b64ToBytes(body);
+    if (tag === 'T0') return JSON.parse(new TextDecoder().decode(bytes));
+    var ds = new DecompressionStream('deflate-raw');
+    var buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    return JSON.parse(new TextDecoder().decode(buf));
+  }
+
+  /* candidates arrive over a second or two; the lump is no use until they are
+     all in it, since there is nothing to send them along afterwards */
+  function gathered() {
+    return new Promise(function (res) {
+      if (pc.iceGatheringState === 'complete') return res();
+      var done = false;
+      var t = setTimeout(finish, 3000);
+      function finish() {
+        if (done) return; done = true;
+        clearTimeout(t);
+        pc.removeEventListener('icegatheringstatechange', check);
+        res();
+      }
+      function check() { if (pc.iceGatheringState === 'complete') finish(); }
+      pc.addEventListener('icegatheringstatechange', check);
+    });
+  }
+
+  function build() {
+    pc = new RTCPeerConnection({ iceServers: ICE });
+    pc.ontrack = function (e) { if (onVoice) onVoice(e.streams[0] || new MediaStream([e.track])); };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        tell('the thread went slack. reload and tie it again.');
+      }
+    };
+  }
+
+  function read(e) {
+    var m; try { m = JSON.parse(e.data); } catch (err) { return; }
+    if (m.sdp) return negotiated(m.sdp);
+    if (onMsg) onMsg(m);
+  }
+
+  /* the positions. every message is a whole picture of one side, so a lost one
+     costs nothing: the next is along in a thirtieth of a second */
+  function wireChannel(ch) {
+    dc = ch;
+    dc.onopen = function () { if (onUp) onUp(); };
+    dc.onmessage = read;
+  }
+
+  /* and everything that is said once and must arrive: the descriptions the
+     voice is set up with, and the word that starts a run. those went down the
+     same unreliable channel as the positions, where losing one loses it for
+     good — no voice, or a game that never restarts, and no way to tell why */
+  function wireControl(ch) {
+    cc = ch;
+    cc.onopen = function () {
+      while (waiting.length) sure(waiting.shift());
+    };
+    cc.onmessage = read;
+  }
+
+  async function host() {
+    role = 'host'; build();
+    wireChannel(pc.createDataChannel('thread', { ordered: false, maxRetransmits: 0 }));
+    wireControl(pc.createDataChannel('say', { ordered: true }));
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered();
+    return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
+  }
+
+  async function take(blob) {
+    role = 'guest'; build();
+    pc.ondatachannel = function (e) {
+      if (e.channel.label === 'say') wireControl(e.channel); else wireChannel(e.channel);
+    };
+    var o = await unpack(blob);
+    await pc.setRemoteDescription({ type: o.t, sdp: o.s });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await gathered();
+    return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
+  }
+
+  async function tie(blob) {
+    var a = await unpack(blob);
+    await pc.setRemoteDescription({ type: a.t, sdp: a.s });
+  }
+
+  /* the voice, added afterwards so it never has to be pasted. only the host
+     ever offers, so the two of them can never talk over each other */
+  async function negotiated(d) {
+    if (d.type === 'offer') {
+      await pc.setRemoteDescription(d);
+      if (mine) addMine();
+      await pc.setLocalDescription(await pc.createAnswer());
+      await gathered();
+      sure({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+    } else {
+      await pc.setRemoteDescription(d);
+    }
+  }
+
+  function addMine() {
+    var have = pc.getSenders().some(function (s) { return s.track && s.track.kind === 'audio'; });
+    if (!have && mine) pc.addTrack(mine.getAudioTracks()[0], mine);
+  }
+
+  async function offerVoice() {
+    if (role !== 'host' || !pc) return;
+    if (mine) addMine();
+    else pc.addTransceiver('audio', { direction: 'recvonly' });
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered();
+    sure({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+  }
+
+  function send(o) {
+    if (dc && dc.readyState === 'open') { try { dc.send(JSON.stringify(o)); } catch (e) {} }
+  }
+
+  /* held until there is somewhere to put it, rather than dropped */
+  function sure(o) {
+    if (cc && cc.readyState === 'open') { try { cc.send(JSON.stringify(o)); } catch (e) {} }
+    else if (waiting.length < 16) waiting.push(o);
+  }
+
+  return {
+    host: host, take: take, tie: tie, send: send, sure: sure, offerVoice: offerVoice,
+    setMic: function (s) { mine = s; },
+    role: function () { return role; },
+    on: function (m, u, v) { onMsg = m; onUp = u; onVoice = v; }
+  };
+})();
+
+/* ------------------------------------------------------------------ sound
+
+   the picture cannot say where the other one is, so the sound has to. their
+   voice is put where they are standing, the thread complains as it stretches,
+   and the wall coming is a tone that climbs.                               */
+
+var sound = (function () {
+  var ctx = null, wallOsc, wallGain, strainSrc, strainGain, strainLp;
+  var voicePan = null, voiceGain = null, tone = null, toneGain = null, tonePan = null;
+  var voiceEl = null, voiceSrc = null;
+  var started = false, hasVoice = false;
+
+  function noise() {
+    var len = ctx.sampleRate * 2, b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * 0.6;
+    return b;
+  }
+
+  function start() {
+    if (started) return; started = true;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+
+    /* the wall. low and far off, high and close */
+    wallOsc = ctx.createOscillator(); wallOsc.type = 'sine'; wallOsc.frequency.value = 60;
+    wallGain = ctx.createGain(); wallGain.gain.value = 0;
+    wallOsc.connect(wallGain); wallGain.connect(ctx.destination); wallOsc.start();
+
+    /* the thread. a dry creak that only shows up when it is being asked to
+       do something it does not want to do */
+    var src = ctx.createBufferSource(); src.buffer = noise(); src.loop = true;
+    strainLp = ctx.createBiquadFilter(); strainLp.type = 'bandpass';
+    strainLp.frequency.value = 320; strainLp.Q.value = 1.4;
+    strainGain = ctx.createGain(); strainGain.gain.value = 0;
+    src.connect(strainLp); strainLp.connect(strainGain); strainGain.connect(ctx.destination);
+    src.start(); strainSrc = src;
+
+    /* and if there is no microphone at either end, they are still not silent:
+       a thin tone stands in for the other one breathing */
+    tone = ctx.createOscillator(); tone.type = 'triangle'; tone.frequency.value = 220;
+    toneGain = ctx.createGain(); toneGain.gain.value = 0;
+    tonePan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (tonePan) { tone.connect(toneGain); toneGain.connect(tonePan); tonePan.connect(ctx.destination); }
+    else { tone.connect(toneGain); toneGain.connect(ctx.destination); }
+    tone.start();
+  }
+
+  /* their voice, put where they are standing */
+  function voice(stream) {
+    if (!ctx) start();
+    if (!ctx) return;
+    hasVoice = true;
+    /* some browsers will not run a remote stream through the graph unless it
+       is also attached to an element. it is kept in the page and kept in a
+       variable: a loose one can be collected mid-sentence and the voice goes */
+    voiceEl = document.createElement('audio');
+    voiceEl.srcObject = stream; voiceEl.muted = true; voiceEl.autoplay = true;
+    voiceEl.setAttribute('hidden', '');
+    document.body.appendChild(voiceEl);
+    voiceEl.play().catch(function () {});
+    voiceSrc = ctx.createMediaStreamSource(stream);
+    var src = voiceSrc;
+    voicePan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    voiceGain = ctx.createGain(); voiceGain.gain.value = 1;
+    if (voicePan) { src.connect(voicePan); voicePan.connect(voiceGain); }
+    else src.connect(voiceGain);
+    voiceGain.connect(ctx.destination);
+  }
+
+  /* d: how far off they are, 0 to 1.  side: -1 left of you, +1 right */
+  function update(near, side, strain, wall) {
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    var far = 1 - near;
+    if (voicePan) voicePan.pan.setTargetAtTime(side * 0.9, t, 0.08);
+    if (voiceGain) voiceGain.gain.setTargetAtTime(0.35 + near * 0.75, t, 0.1);
+
+    if (tonePan) tonePan.pan.setTargetAtTime(side * 0.9, t, 0.08);
+    toneGain.gain.setTargetAtTime(hasVoice ? 0 : 0.020 + near * 0.045, t, 0.15);
+    tone.frequency.setTargetAtTime(150 + far * 260, t, 0.2);
+
+    strainGain.gain.setTargetAtTime(strain * strain * 0.36, t, 0.05);
+    strainLp.frequency.setTargetAtTime(240 + strain * 1700, t, 0.05);
+
+    wallGain.gain.setTargetAtTime(wall > 0 ? 0.05 + wall * 0.10 : 0, t, 0.08);
+    wallOsc.frequency.setTargetAtTime(70 + wall * wall * 300, t, 0.06);
+  }
+
+  function knock(kind) {
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    var o = ctx.createOscillator(), gg = ctx.createGain();
+    o.type = kind === 'good' ? 'sine' : 'sawtooth';
+    o.frequency.setValueAtTime(kind === 'good' ? 520 : 180, t);
+    o.frequency.exponentialRampToValueAtTime(kind === 'good' ? 880 : 40, t + (kind === 'good' ? 0.18 : 0.9));
+    gg.gain.setValueAtTime(0.0001, t);
+    gg.gain.exponentialRampToValueAtTime(kind === 'good' ? 0.09 : 0.22, t + 0.02);
+    gg.gain.exponentialRampToValueAtTime(0.0001, t + (kind === 'good' ? 0.4 : 1.2));
+    o.connect(gg); gg.connect(ctx.destination);
+    o.start(t); o.stop(t + 1.3);
+  }
+
+  return { start: start, voice: voice, update: update, knock: knock,
+           heard: function () { return hasVoice; },
+           stream: function () { return voiceEl ? voiceEl.srcObject : null; } };
+})();
+
+/* ------------------------------------------------------------------- game
+
+   a line, and the two of you on it. you can see your own light and the near
+   end of the thread; the rest is dark. walls come out of the dark with a gap
+   cut for each of you, and only your own gap is ever shown to you.         */
+
+var REST = 0.11;          /* the thread hangs slack up to here            */
+var SNAP = 0.46;          /* and comes apart past here                    */
+var PULL = 7.0;           /* how hard it drags you when it is taut        */
+var ACCEL = 2.3, DRAG = 2.6, TOP = 0.85;
+var TOL = 0.048;          /* how near the gap you have to be              */
+var FUSE = 0.40;          /* and how long it will hold once it is past it */
+
+var me = { p: 0.38, v: 0 };
+var you = { p: 0.62, v: 0, seen: 0.62 };
+var host = false, live = false;
+
+var world = {
+  run: 0, score: 0, best: 0, phase: 'wait',   /* wait | walk | lost */
+  wall: null, lost: '', over: 0
+};
+
+var keys = {}, touch = 0;
+
+/* ---- the walls, which only the one who opened the thread decides on */
+
+function newWall(n) {
+  var gapMe = 0.10 + Math.random() * 0.80;
+  /* always reachable together, but often only just */
+  var reach = 0.10 + Math.random() * (SNAP - 0.16);
+  var dir = Math.random() < 0.5 ? -1 : 1;
+  var gapYou = gapMe + dir * reach;
+  if (gapYou < 0.06 || gapYou > 0.94) gapYou = gapMe - dir * reach;
+  var period = Math.max(2.6, 6.2 - n * 0.16);
+  return { n: n, t: 1, len: period, ga: gapMe, gb: gapYou };
+}
+
+function begin() {
+  world.run++; world.score = 0; world.phase = 'walk'; world.lost = ''; world.over = 0;
+  world.wall = newWall(0);
+  me.p = 0.38; me.v = 0; you.p = 0.62; you.v = 0; you.seen = 0.62;
+}
+
+function lostText() {
+  if (world.lost === 'snap') return 'the thread came apart';
+  if (!world.lost) return '';
+  var wasMe = host ? (world.lost === 'a') : (world.lost === 'b');
+  return wasMe ? 'the wall took you' : 'they were taken by the wall';
+}
+
+function lose(why) {
+  if (world.phase !== 'walk') return;
+  world.phase = 'lost'; world.lost = why;
+  if (world.score > world.best) world.best = world.score;
+  sound.knock('bad');
+}
+
+/* ---- one frame */
+
+var last = 0, sent = 0;
+function frame(ms) {
+  requestAnimationFrame(frame);
+  var now = ms * 0.001;
+  var dt = Math.min(now - last, 0.05) || 0.016;
+  last = now;
+
+  var want = 0;
+  if (keys.left) want -= 1;
+  if (keys.right) want += 1;
+  want += touch;
+  if (want < -1) want = -1; if (want > 1) want = 1;
+
+  if (world.phase === 'walk') {
+    me.v += want * ACCEL * dt;
+
+    /* the thread. past its rest length it hauls you toward them, so when they
+       move you are moved, and that is the only touch there is in here */
+    var d = you.seen - me.p;
+    var ad = Math.abs(d);
+    if (ad > REST) me.v += (d > 0 ? 1 : -1) * (ad - REST) * PULL * dt;
+
+    me.v -= me.v * DRAG * dt;
+    if (me.v > TOP) me.v = TOP; if (me.v < -TOP) me.v = -TOP;
+    me.p += me.v * dt;
+    if (me.p < 0.02) { me.p = 0.02; me.v = 0; }
+    if (me.p > 0.98) { me.p = 0.98; me.v = 0; }
+  }
+
+  you.seen += (you.p - you.seen) * Math.min(1, dt * 14);
+
+  if (host && world.phase === 'walk') {
+    var w = world.wall;
+    w.t -= dt / w.len;
+    /* it does not go the instant it is over length. it frays, and complains
+       while it frays, and you have a moment to come back to each other */
+    if (Math.abs(you.seen - me.p) > SNAP) {
+      world.over += dt;
+      if (world.over > FUSE) lose('snap');
+    } else world.over = Math.max(0, world.over - dt * 2);
+    if (w.t <= 0) {
+      var mineOk = Math.abs(me.p - w.ga) < TOL;
+      var yoursOk = Math.abs(you.seen - w.gb) < TOL;
+      if (mineOk && yoursOk) {
+        world.score++; sound.knock('good');
+        world.wall = newWall(w.n + 1);
+      } else {
+        /* sent as which of the two of them it was, not as a sentence: the same
+           sentence read from the other end says the wrong thing about who */
+        lose(mineOk ? 'b' : 'a');
+      }
+    }
+  }
+
+  /* thirty a second is plenty: each one is a whole picture of this side, and
+     the other end is smoothing between them anyway */
+  sent += dt;
+  if (live && sent > 0.033) {
+    sent = 0;
+    wire.send(host
+      ? { p: me.p, v: me.v, r: world.run, s: world.score, b: world.best, f: world.phase,
+          l: world.lost, w: world.wall ? [world.wall.t, world.wall.gb, world.wall.len] : null }
+      : { p: me.p, v: me.v });
+  }
+
+  hear();
+  draw();
+}
+
+function hear() {
+  var d = Math.abs(you.seen - me.p);
+  var near = Math.max(0, 1 - d / 0.7);
+  var side = Math.max(-1, Math.min(1, (you.seen - me.p) / 0.45));
+  var strain = Math.max(0, (d - REST) / (SNAP - REST));
+  if (d > SNAP) strain = 1 + Math.min(1, (d - SNAP) * 6);   /* past it, it screams */
+  var w = world.wall && world.phase === 'walk' ? 1 - world.wall.t : 0;
+  sound.update(near, side, strain, Math.max(0, w));
+}
+
+/* ---- drawing. almost nothing, on purpose */
+
+function draw() {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, W, H);
+
+  var y = H * 0.5;
+  var x0 = W * 0.06, x1 = W * 0.94;
+  function at(p) { return x0 + (x1 - x0) * p; }
+
+  /* the line you are both on */
+  var lg = g.createLinearGradient(x0, 0, x1, 0);
+  lg.addColorStop(0, 'rgba(90,104,126,0)');
+  lg.addColorStop(0.5, 'rgba(90,104,126,0.30)');
+  lg.addColorStop(1, 'rgba(90,104,126,0)');
+  g.strokeStyle = lg; g.lineWidth = 1 * U;
+  g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+
+  var mx = at(me.p), yx = at(you.seen);
+  var d = Math.abs(you.seen - me.p);
+  var strain = Math.max(0, Math.min(1, (d - REST) / (SNAP - REST)));
+
+  /* the thread. you get the near end of it and no more, so it tells you which
+     way they are and how hard they are pulling, but never where they are */
+  if (world.phase !== 'lost') {
+    var dir = yx > mx ? 1 : -1;
+    var vis = Math.min(Math.abs(yx - mx), (0.10 + 0.16 * strain) * (x1 - x0));
+    var tg = g.createLinearGradient(mx, 0, mx + dir * vis, 0);
+    var a = 0.30 + 0.55 * strain;
+    tg.addColorStop(0, 'rgba(150,170,200,' + a.toFixed(3) + ')');
+    tg.addColorStop(1, 'rgba(150,170,200,0)');
+    g.strokeStyle = tg;
+    g.lineWidth = (1.5 - 0.7 * strain) * U;
+    g.beginPath();
+    g.moveTo(mx, y);
+    /* slack sags, taut goes straight and shivers */
+    var sag = (1 - strain) * 10 * U;
+    var jit = strain > 0.75 ? (Math.random() - 0.5) * (strain - 0.75) * 26 * U : 0;
+    g.quadraticCurveTo(mx + dir * vis * 0.5, y + sag + jit, mx + dir * vis, y + jit * 0.5);
+    g.stroke();
+  }
+
+  /* past its length: the whole page flickers while the thread frays */
+  if (world.phase === 'walk' && d > SNAP) {
+    g.fillStyle = 'rgba(200,215,240,' + (0.03 + Math.random() * 0.05).toFixed(3) + ')';
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* your own gap, and only when the wall is near enough to make it out */
+  if (world.wall && world.phase === 'walk') {
+    var near = 1 - world.wall.t;
+    if (near > 0.42) {
+      var k = (near - 0.42) / 0.58;
+      var gx = at(world.wall.ga);
+      g.strokeStyle = 'rgba(190,205,230,' + (k * 0.5).toFixed(3) + ')';
+      g.lineWidth = 1 * U;
+      g.beginPath();
+      g.moveTo(gx, y - (14 + 26 * k) * U); g.lineTo(gx, y - 6 * U);
+      g.moveTo(gx, y + 6 * U); g.lineTo(gx, y + (14 + 26 * k) * U);
+      g.stroke();
+    }
+    /* and the wall itself, arriving as a brightening of everything */
+    var f = Math.pow(Math.max(0, near - 0.55) / 0.45, 3);
+    if (f > 0) {
+      g.fillStyle = 'rgba(150,170,200,' + (f * 0.06).toFixed(3) + ')';
+      g.fillRect(0, 0, W, H);
+    }
+  }
+
+  /* you */
+  var glow = g.createRadialGradient(mx, y, 0, mx, y, 26 * U);
+  glow.addColorStop(0, 'rgba(226,235,248,0.95)');
+  glow.addColorStop(0.25, 'rgba(180,198,226,0.35)');
+  glow.addColorStop(1, 'rgba(180,198,226,0)');
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(mx, y, 26 * U, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#f2f6fc';
+  g.beginPath(); g.arc(mx, y, 2.2 * U, 0, Math.PI * 2); g.fill();
+
+  /* the count, and whatever has just gone wrong */
+  g.font = (11 * U) + 'px "Courier New",courier,monospace';
+  g.textAlign = 'center';
+  g.fillStyle = 'rgba(140,152,172,0.75)';
+  g.fillText(String(world.score), W * 0.5, H * 0.5 - 64 * U);
+  if (world.best > 0) {
+    g.fillStyle = 'rgba(110,122,142,0.5)';
+    g.fillText('best ' + world.best, W * 0.5, H * 0.5 - 46 * U);
+  }
+  if (world.phase === 'lost') {
+    g.fillStyle = 'rgba(170,185,210,0.85)';
+    g.fillText(lostText(), W * 0.5, H * 0.5 + 64 * U);
+    g.fillStyle = 'rgba(110,122,142,0.6)';
+    g.fillText(host ? 'press to go again' : 'they will start it again',
+               W * 0.5, H * 0.5 + 84 * U);
+  }
+  if (world.phase === 'wait') {
+    g.fillStyle = 'rgba(140,152,172,0.7)';
+    g.fillText(host ? 'press to begin' : 'waiting for them', W * 0.5, H * 0.5 + 64 * U);
+  }
+}
+
+/* ------------------------------------------------------------------ input */
+
+function press(e) {
+  var k = e.key;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') keys.left = true;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') keys.right = true;
+  if (k === ' ' || k === 'Enter') go();
+}
+function lift(e) {
+  var k = e.key;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') keys.left = false;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') keys.right = false;
+}
+document.addEventListener('keydown', press);
+document.addEventListener('keyup', lift);
+
+function go() {
+  if (!live) return;
+  if (world.phase === 'walk') return;
+  if (host) begin(); else wire.sure({ go: 1 });
+}
+
+canvas.addEventListener('pointerdown', function (e) {
+  if (world.phase !== 'walk') { go(); return; }
+  touch = e.clientX < window.innerWidth * 0.5 ? -1 : 1;
+  if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+});
+canvas.addEventListener('pointermove', function (e) {
+  if (touch === 0) return;
+  if (e.pointerType === 'mouse' && e.buttons === 0) { touch = 0; return; }
+  touch = e.clientX < window.innerWidth * 0.5 ? -1 : 1;
+});
+function letGo() { touch = 0; }
+canvas.addEventListener('pointerup', letGo);
+canvas.addEventListener('pointercancel', letGo);
+canvas.addEventListener('lostpointercapture', letGo);
+window.addEventListener('pointerup', letGo);
+window.addEventListener('blur', letGo);
+
+function resize() {
+  W = Math.floor(window.innerWidth * DPR);
+  H = Math.floor(window.innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  U = DPR;
+}
+window.addEventListener('resize', resize);
+
+/* ------------------------------------------------------- what comes in */
+
+wire.on(function (m) {
+  if (m.go) { if (host) begin(); return; }
+  if (m.mic) { if (host) wire.offerVoice(); return; }
+  if (typeof m.p === 'number') { you.p = m.p; you.v = m.v || 0; }
+  if (!host) {
+    if (typeof m.s === 'number') {
+      if (m.r !== world.run) { world.run = m.r; }
+      if (m.s > world.score && m.f === 'walk') sound.knock('good');
+      world.score = m.s; world.best = m.b || 0;
+      if (m.f === 'lost' && world.phase !== 'lost') sound.knock('bad');
+      world.phase = m.f; world.lost = m.l || '';
+    }
+    if (m.w) world.wall = { t: m.w[0], ga: m.w[1], len: m.w[2], n: 0 };
+    else if (m.w === null) world.wall = null;
+  }
+}, function () {
+  /* the channel is open: they are joined */
+  live = true;
+  host = wire.role() === 'host';
+  panel.className = 'gone';
+  sound.start();
+  world.phase = 'wait';
+  askMic();
+}, function (stream) {
+  sound.voice(stream);
+});
+
+/* the microphones go on afterwards, over the channel that is already up.
+
+   the two of them will not be ready at the same moment — one of them has a
+   permission box to answer and might take a while over it. so whoever gets a
+   microphone says so, and the host offers again. otherwise the host would ask
+   once, half a second in, hear nothing back from a guest who was still
+   deciding, and never hear them at all.                                     */
+async function askMic() {
+  var stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (e) { stream = null; }
+  wire.setMic(stream);
+  if (wire.role() === 'host') setTimeout(function () { wire.offerVoice(); }, 600);
+  else if (stream) wire.sure({ mic: 1 });
+}
+
+/* ------------------------------------------------------------- the panel */
+
+document.getElementById('b-host').onclick = async function () {
+  show('s-host'); tell('making a thread...');
+  try {
+    document.getElementById('t-offer').value = await wire.host();
+    tell('');
+  } catch (e) { tell(String(e.message || e)); }
+};
+document.getElementById('b-join').onclick = function () { show('s-join'); tell(''); };
+
+document.getElementById('b-take').onclick = async function () {
+  tell('taking it...');
+  try {
+    document.getElementById('t-reply').value = await wire.take(document.getElementById('t-in').value);
+    show('s-reply'); tell('');
+  } catch (e) { tell(String(e.message || e)); }
+};
+
+document.getElementById('b-tie').onclick = async function () {
+  tell('tying...');
+  try { await wire.tie(document.getElementById('t-answer').value); tell('waiting for it to take...'); }
+  catch (e) { tell(String(e.message || e)); }
+};
+
+function copier(id) {
+  return function () {
+    var t = document.getElementById(id);
+    t.select(); t.setSelectionRange(0, 99999);
+    if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(function () { tell('copied.'); },
+                                                                        function () { tell('copy it by hand.'); });
+    else { try { document.execCommand('copy'); tell('copied.'); } catch (e) { tell('copy it by hand.'); } }
+  };
+}
+document.getElementById('b-copy1').onclick = copier('t-offer');
+document.getElementById('b-copy2').onclick = copier('t-reply');
+
+resize();
+requestAnimationFrame(frame);
+
+/* for testing two of these against each other */
+window.__thread = { wire: wire, world: world, me: me, you: you, sound: sound,
+                    live: function () { return live; }, host: function () { return host; },
+                    lost: lostText };
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
