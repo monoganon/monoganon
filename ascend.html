@@ -132,41 +132,76 @@ var wire = (function () {
   var ICE = [{ urls: ['stun:global.stun.twilio.com:3478', 'stun:stun.l.google.com:19302'] }];
   var MAXPASTE = 24000;        /* a lump this big is not a thread, it is a trap */
 
+  /* plain base64 uses + and / and =, and a thread has to survive being sent
+     through whatever the two of you already talk on. anything that treats the
+     text as part of a link turns every + into a space — and a space is then
+     indistinguishable from the line breaks a chat window puts in, so it gets
+     tidied away and the thread arrives shorter than it left. the browser then
+     says the string is not correctly encoded, or worse, decodes it into
+     nonsense that looks like the wrong kind of key. so: - and _ instead, and
+     no padding. nothing rewrites those. */
   function bytesToB64(b) {
     var s = '', CH = 0x8000;
     for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
-    return btoa(s);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
   function b64ToBytes(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
     var raw = atob(s), b = new Uint8Array(raw.length);
     for (var i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
     return b;
   }
+  /* and a short mark on the front, so that a thread which did get mangled on
+     the way here is told that it was mangled, rather than being guessed at */
+  function mark(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h = (h >>> 0).toString(36);
+    while (h.length < 7) h = '0' + h;
+    return h.slice(0, 7);
+  }
+
+  var DAMAGED = 'that thread got damaged on the way here — some of it is' +
+                ' missing or changed. copy it again and send it as plain text,' +
+                ' not as a link and not in anything that might tidy it up.';
 
   async function pack(o) {
-    var json = JSON.stringify(o);
+    var json = JSON.stringify(o), body, tag = 'B0';
     if (window.CompressionStream) {
       try {
         var cs = new CompressionStream('deflate-raw');
         var buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
-        return 'A1' + bytesToB64(new Uint8Array(buf));
+        body = bytesToB64(new Uint8Array(buf)); tag = 'B1';
       } catch (e) { /* fall through */ }
     }
-    return 'A0' + bytesToB64(new TextEncoder().encode(json));
+    if (body === undefined) body = bytesToB64(new TextEncoder().encode(json));
+    return tag + mark(body) + body;
   }
   async function unpack(s) {
     s = (s || '').replace(/\s+/g, '');
     /* a small lump can be made to inflate into a very large one. it would only
        ever hurt the person who pasted it, but it would hurt them a lot */
     if (s.length > MAXPASTE) throw new Error('that is far too long to be a thread');
-    var tag = s.slice(0, 2), body = s.slice(2);
-    if (tag !== 'A0' && tag !== 'A1') throw new Error('that does not look like a thread');
-    var bytes = b64ToBytes(body);
-    if (tag === 'A0') return JSON.parse(new TextDecoder().decode(bytes));
-    var ds = new DecompressionStream('deflate-raw');
-    var buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    var tag = s.slice(0, 2), body, sum = '';
+    if (tag === 'B0' || tag === 'B1') { sum = s.slice(2, 9); body = s.slice(9); }
+    else if (tag === 'A0' || tag === 'A1') body = s.slice(2);   /* the older kind */
+    else throw new Error('that does not look like a thread. it should be a' +
+                         ' single long run of letters, all of it.');
+    if (sum && sum !== mark(body)) throw new Error(DAMAGED);
+    var bytes, buf;
+    try { bytes = b64ToBytes(body); } catch (e) { throw new Error(DAMAGED); }
+    try {
+      if (tag === 'A0' || tag === 'B0') return JSON.parse(new TextDecoder().decode(bytes));
+      var ds = new DecompressionStream('deflate-raw');
+      buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    } catch (e) { throw new Error(DAMAGED); }
     if (buf.byteLength > MAXPASTE * 8) throw new Error('that is far too long to be a thread');
-    return JSON.parse(new TextDecoder().decode(buf));
+    var o;
+    try { o = JSON.parse(new TextDecoder().decode(buf)); } catch (e) { throw new Error(DAMAGED); }
+    if (!o || typeof o.s !== 'string' || (o.t !== 'offer' && o.t !== 'answer'))
+      throw new Error(DAMAGED);
+    return o;
   }
 
   /* the lump is no use until the addresses are in it, since there is nothing
