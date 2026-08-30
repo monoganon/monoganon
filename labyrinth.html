@@ -686,12 +686,13 @@ function reveal(ch) {
   if (any) {
     var all = true;
     for (i = 0; i < answer.length; i++) if (!found[i]) all = false;
-    if (all) { solved = true; solvedT = 0; sfx.solve(); } else sfx.right();
+    if (all) { solved = true; solvedT = 0; panel = null; sfx.solve(); } else sfx.right();
   }
   return any;
 }
 
 function guess(ch) {
+  if (wrong.indexOf(ch) >= 0) return;     /* already said, and already wrong */
   for (var i = 0; i < answer.length; i++) if (answer.charAt(i) === ch && found[i]) return;
   if (!reveal(ch)) {
     if (wrong.indexOf(ch) < 0) wrong.push(ch);
@@ -919,10 +920,15 @@ function drawStatue(s) {
   var cx = P[0], cy = P[1] + hh * 0.5;
   var lt = lightAt(s.x, s.y);
   var warm = Math.min(1, lt * 1.7);
-  var L = AMBIENT * nightAt(s.x, s.y) + lt + s.glow * 0.30;
+  /* the night takes less off a statue than it takes off a hedge. they are the
+     only things in the garden worth walking toward, so they have to be worth
+     seeing from the far end of it */
+  var L = AMBIENT * (0.42 + 0.58 * nightAt(s.x, s.y)) + lt + s.glow * 0.30;
 
-  /* the plinth */
-  var pw = hw * 0.44, ph = hh * 0.44, pz = 13 * scale;
+  /* the plinth. tall enough that what stands on it clears the hedges — a
+     statue you cannot see over the hedge is no use to anybody trying to steer
+     by it */
+  var pw = hw * 0.46, ph = hh * 0.46, pz = 26 * scale;
   g.fillStyle = col(0.14, L, warm);
   g.beginPath();
   g.moveTo(cx - pw, cy); g.lineTo(cx, cy + ph);
@@ -939,38 +945,46 @@ function drawStatue(s) {
   g.lineTo(cx, cy - pz + ph); g.lineTo(cx - pw, cy - pz);
   g.closePath(); g.fill();
 
-  /* the figure on it: a shrouded thing, worn smooth */
+  /* the figure on it: a shrouded thing, worn smooth. head and shoulders stand
+     a good way above the hedge line, so it can be steered by from three or
+     four turns off */
   var by = cy - pz;
-  var bh = 40 * scale;
+  var bh = 64 * scale;
   var grad = g.createLinearGradient(cx, by - bh, cx, by);
-  grad.addColorStop(0, col(0.46, L, warm * 0.55));
-  grad.addColorStop(1, col(0.17, L, warm * 0.55));
+  grad.addColorStop(0, col(0.66, L, warm * 0.55));
+  grad.addColorStop(0.55, col(0.40, L, warm * 0.55));
+  grad.addColorStop(1, col(0.18, L, warm * 0.55));
   g.fillStyle = grad;
   g.beginPath();
   g.moveTo(cx, by - bh);
-  g.quadraticCurveTo(cx + 9 * scale, by - bh * 0.62, cx + 8 * scale, by);
-  g.lineTo(cx - 8 * scale, by);
-  g.quadraticCurveTo(cx - 9 * scale, by - bh * 0.62, cx, by - bh);
+  g.quadraticCurveTo(cx + 12 * scale, by - bh * 0.58, cx + 10 * scale, by);
+  g.lineTo(cx - 10 * scale, by);
+  g.quadraticCurveTo(cx - 12 * scale, by - bh * 0.58, cx, by - bh);
   g.closePath(); g.fill();
-  g.fillStyle = col(0.52, L, warm * 0.5);
+  /* the moon down one side of it, so it is a shape at a distance and not a
+     smear */
+  g.strokeStyle = 'rgba(186,208,248,' + (0.10 + 0.22 * nightAt(s.x, s.y)).toFixed(3) + ')';
+  g.lineWidth = 1.1 * scale;
+  g.stroke();
+  g.fillStyle = col(0.74, L, warm * 0.5);
   g.beginPath();
-  g.ellipse(cx, by - bh * 0.94, 5.2 * scale, 6.0 * scale, 0, 0, Math.PI * 2);
+  g.ellipse(cx, by - bh * 0.93, 6.4 * scale, 7.4 * scale, 0, 0, Math.PI * 2);
   g.fill();
 
   /* the plaque. it catches the torch before anything else does */
   var plq = col(s.read ? 0.62 : 0.34, L + s.glow * 0.5, Math.min(1, warm + 0.25));
   g.fillStyle = plq;
-  g.fillRect(cx - 7 * scale, by - 13 * scale, 14 * scale, 9 * scale);
+  g.fillRect(cx - 8 * scale, by - 15 * scale, 16 * scale, 11 * scale);
   g.fillStyle = col(0.06, L, warm);
-  g.fillRect(cx - 5.4 * scale, by - 11.4 * scale, 10.8 * scale, 5.8 * scale);
+  g.fillRect(cx - 6.2 * scale, by - 13.1 * scale, 12.4 * scale, 7.2 * scale);
   if (s.p.t === 'letter') {
     g.fillStyle = plq;
-    g.font = 'bold ' + (7 * scale).toFixed(1) + 'px "Courier New",monospace';
+    g.font = 'bold ' + (8.4 * scale).toFixed(1) + 'px "Courier New",monospace';
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(s.p.v, cx, by - 8.3 * scale);
+    g.fillText(s.p.v, cx, by - 9.5 * scale);
   } else {
     g.fillStyle = plq;
-    g.fillRect(cx - 3 * scale, by - 9.6 * scale, 6 * scale, 2.2 * scale);
+    g.fillRect(cx - 3.6 * scale, by - 11 * scale, 7.2 * scale, 2.6 * scale);
   }
 }
 
@@ -1384,6 +1398,9 @@ function drawPanel() {
   g.font = (10 * UI).toFixed(0) + 'px "Courier New",monospace';
   g.fillStyle = 'rgba(150,176,214,0.62)';
   g.fillText('SAY A LETTER', W * 0.5, L.gy - 26 * UI);
+  g.fillStyle = 'rgba(140,164,204,0.40)';
+  g.fillText('TOUCH AWAY WHEN DONE', W * 0.5, L.gy + L.rows * L.cell + 20 * UI);
+  g.fillStyle = 'rgba(150,176,214,0.62)';
   var xy = [0, 0];
   for (var i2 = 0; i2 < 26; i2++) {
     var c = String.fromCharCode(65 + i2);
@@ -1584,7 +1601,7 @@ function onDown(e) {
   if (panel) {                            /* a panel eats the touch */
     if (panel.kind === 'letters') {
       var c = letterAt(_pt[0], _pt[1]);
-      if (c) { guess(c); panel = null; return; }
+      if (c) { guess(c); return; }        /* stays open for the next letter */
     }
     panel = null;
     return;
@@ -1663,18 +1680,27 @@ window.addEventListener('blur', function () {
 var keys = {};
 window.addEventListener('keydown', function (e) {
   sfx.start(); sfx.resume();
-  keys[e.key.toLowerCase()] = true;
   if (e.key === 'Escape') { panel = null; return; }
-  /* with the letters open, a letter is a letter — including the one the button
-     is bound to. it is only the action key when there is nothing open */
-  if (panel && panel.kind === 'letters' && /^[a-z]$/i.test(e.key)) {
-    e.preventDefault();
-    guess(e.key.toUpperCase()); panel = null;
+
+  if (panel) {
+    /* nothing that is typed at a panel is a footstep. holding W to say a W and
+       then closing the panel used to walk her into a hedge */
+    if (panel.kind === 'letters') {
+      /* a letter is a letter, including the one the button is bound to, and
+         the ring stays open so a whole name can be said into it in one go */
+      if (/^[a-z]$/i.test(e.key)) { e.preventDefault(); guess(e.key.toUpperCase()); return; }
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); panel = null; return; }
+      return;
+    }
+    /* a plaque is dismissed by anything at all */
+    e.preventDefault(); panel = null;
     return;
   }
-  if (e.key === ' ' || e.key.toLowerCase() === 'e') {
+
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ' || e.key === 'Enter' || e.key.toLowerCase() === 'e') {
     e.preventDefault();
-    if (panel) panel = null; else if (!solved) act();
+    if (!solved) act();
   }
 });
 window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
