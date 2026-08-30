@@ -120,6 +120,10 @@ var wire = (function () {
   var pc = null, dc = null, cc = null, mine = null, role = null;
   var onMsg = null, onUp = null, onVoice = null;
   var waiting = [];
+  /* what the two browsers managed to find out about themselves, kept so that
+     a failure can be described rather than just announced */
+  var found = { host: 0, mdns: 0, public: 0, relay: 0 };
+  var ice = '', conn = '';
 
   var ICE = [{ urls: ['stun:global.stun.twilio.com:3478', 'stun:stun.l.google.com:19302'] }];
   var MAXPASTE = 24000;        /* a lump this big is not a thread, it is a trap */
@@ -161,30 +165,77 @@ var wire = (function () {
     return JSON.parse(new TextDecoder().decode(buf));
   }
 
+  /* the lump is no use until the addresses are in it, since there is nothing
+     to send them along afterwards. three seconds was not always long enough
+     for the public one to come back, and without that two people who are not
+     on the same wifi have nothing to try. */
   function gathered() {
     return new Promise(function (res) {
       if (pc.iceGatheringState === 'complete') return res();
       var done = false;
-      var t = setTimeout(finish, 3000);
+      var hard = setTimeout(finish, 9000);
+      var soft = null;
       function finish() {
         if (done) return; done = true;
-        clearTimeout(t);
+        clearTimeout(hard); if (soft) clearTimeout(soft);
         pc.removeEventListener('icegatheringstatechange', check);
+        pc.removeEventListener('icecandidate', look);
         res();
       }
       function check() { if (pc.iceGatheringState === 'complete') finish(); }
+      /* once a public address is in, wait a moment for its friends and go */
+      function look() {
+        if ((found.public || found.relay) && !soft) soft = setTimeout(finish, 1200);
+      }
       pc.addEventListener('icegatheringstatechange', check);
+      pc.addEventListener('icecandidate', look);
     });
   }
 
   function build() {
     pc = new RTCPeerConnection({ iceServers: ICE });
     pc.ontrack = function (e) { if (onVoice) onVoice(e.streams[0] || new MediaStream([e.track])); };
+    pc.onicecandidate = function (e) {
+      if (!e.candidate || !e.candidate.candidate) return;
+      var c = e.candidate.candidate;
+      if (/ typ relay/.test(c)) found.relay++;
+      else if (/ typ srflx/.test(c)) found.public++;
+      else if (/ typ host/.test(c)) {
+        found.host++;
+        if (/\.local/.test(c)) found.mdns++;
+      }
+    };
+    pc.oniceconnectionstatechange = function () { ice = pc.iceConnectionState; };
     pc.onconnectionstatechange = function () {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')
-        tell('the rope went slack. reload and tie it again.');
+      conn = pc.connectionState;
+      if (conn === 'failed' || conn === 'disconnected') slack();
     };
   }
+
+  /* the two of them never found a way through to each other. that is nearly
+     always the same story and it is worth telling it rather than shrugging */
+  function slack() {
+    var why = 'the rope went slack.';
+    if (!found.public && !found.relay)
+      why += ' nothing outside this machine answered, so neither of you could' +
+             ' work out your own address.';
+    else if (found.mdns && found.host === found.mdns && !found.relay)
+      why += ' you are both behind the same router. it will only work if the two' +
+             ' machines can see each other on the wifi directly — some routers and' +
+             ' most guest networks do not allow that.';
+    else
+      why += ' no way through was found between you.';
+    tell(why + ' ' + report());
+    fail = why;
+  }
+
+  function report() {
+    return '[' + found.host + ' local' + (found.mdns ? ' by name' : '') +
+           ', ' + found.public + ' public, ' + found.relay + ' relayed · ' +
+           (ice || '-') + '/' + (conn || '-') + ']';
+  }
+
+  var fail = '';
 
   function read(e) {
     var m; try { m = JSON.parse(e.data); } catch (err) { return; }
@@ -211,11 +262,14 @@ var wire = (function () {
     return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
   }
   async function take(blob) {
+    var o = await unpack(blob);
+    if (o.t !== 'offer')
+      throw new Error('that is a reply, not an opening. one of you opens a thread' +
+                      ' and the other takes it — you cannot both do the same one.');
     role = 'guest'; build();
     pc.ondatachannel = function (e) {
       if (e.channel.label === 'say') wireControl(e.channel); else wireChannel(e.channel);
     };
-    var o = await unpack(blob);
     await pc.setRemoteDescription({ type: o.t, sdp: o.s });
     await pc.setLocalDescription(await pc.createAnswer());
     await gathered();
@@ -223,6 +277,16 @@ var wire = (function () {
   }
   async function tie(blob) {
     var a = await unpack(blob);
+    if (!pc) throw new Error('open a thread first.');
+    if (a.t !== 'answer')
+      throw new Error('that is an opening, not a reply. if you both opened one,' +
+                      ' one of you should take the other\'s instead.');
+    if (pc.signalingState !== 'have-local-offer')
+      throw new Error(pc.currentRemoteDescription
+        ? 'this one is already tied.'
+        : 'that cannot go on here yet — open a thread first.');
+    if (a.s === pc.localDescription.sdp)
+      throw new Error('that is your own thread come back to you. it wants theirs.');
     await pc.setRemoteDescription({ type: a.t, sdp: a.s });
   }
 
@@ -258,6 +322,7 @@ var wire = (function () {
 
   return {
     host: host, take: take, tie: tie, send: send, sure: sure, offerVoice: offerVoice,
+    report: report, trouble: function () { return fail; },
     setMic: function (s) { mine = s; },
     mic: function () { return mine; },
     role: function () { return role; },
@@ -940,6 +1005,25 @@ function draw() {
   drawSling();
   drawTalk();
   drawWords();
+
+  /* the panel is out of the way by now, so anything that goes wrong with the
+     rope between the two machines has to be said here or not at all */
+  var bad = wire.trouble();
+  if (bad) {
+    g.font = (10 * U) + 'px "Courier New",courier,monospace';
+    g.textAlign = 'center';
+    g.fillStyle = 'rgba(210,170,160,0.75)';
+    var words = bad.split(' '), line = '', ln = 0;
+    for (var wi = 0; wi < words.length; wi++) {
+      var t2 = line ? line + ' ' + words[wi] : words[wi];
+      if (g.measureText(t2).width > W * 0.86 && line) {
+        g.fillText(line, W * 0.5, (H * 0.30 + ln * 14 * U)); line = words[wi]; ln++;
+      } else line = t2;
+    }
+    if (line) g.fillText(line, W * 0.5, (H * 0.30 + ln * 14 * U));
+    g.fillStyle = 'rgba(150,140,140,0.5)';
+    g.fillText(wire.report(), W * 0.5, (H * 0.30 + (ln + 1.6) * 14 * U));
+  }
 }
 
 var LEG = [0.55, 1.15, 1.95, 2.62];
@@ -1202,8 +1286,10 @@ async function askMic() {
 
 document.getElementById('b-host').onclick = async function () {
   show('s-host'); tell('making a thread...');
-  try { document.getElementById('t-offer').value = await wire.host(); tell(''); }
-  catch (e) { tell(String(e.message || e)); }
+  try {
+    document.getElementById('t-offer').value = await wire.host();
+    tell('found ' + wire.report());
+  } catch (e) { tell(String(e.message || e)); }
 };
 document.getElementById('b-join').onclick = function () { show('s-join'); tell(''); };
 document.getElementById('b-alone').onclick = function () { alone(); };
@@ -1211,12 +1297,12 @@ document.getElementById('b-take').onclick = async function () {
   tell('taking it...');
   try {
     document.getElementById('t-reply').value = await wire.take(document.getElementById('t-in').value);
-    show('s-reply'); tell('');
+    show('s-reply'); tell('found ' + wire.report());
   } catch (e) { tell(String(e.message || e)); }
 };
 document.getElementById('b-tie').onclick = async function () {
   tell('tying...');
-  try { await wire.tie(document.getElementById('t-answer').value); tell('waiting for it to take...'); }
+  try { await wire.tie(document.getElementById('t-answer').value); tell('waiting for it to take... ' + wire.report()); }
   catch (e) { tell(String(e.message || e)); }
 };
 function copier(id) {
