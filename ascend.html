@@ -50,10 +50,11 @@
          and you keep swapping until you are at the top or she has you.</p>
       <p class="note">Nothing runs in between. To be tied together you must pass a piece
          of text back and forth once, by whatever way you already talk.</p>
-      <p class="warn">You cannot both be on the same web. Two machines behind one router
-         share an address and generally cannot find each other through it, so being in
-         the same room is the one arrangement that will not work. If you are, put one
-         of you on mobile data.</p>
+      <p class="warn">This goes straight from one of you to the other, with nothing in
+         between, and there are two places it cannot go. Not between two machines on the
+         same wifi — they share an address and cannot find each other through it. And not
+         between two phones on mobile data — the phone networks put everyone behind the
+         same wall. One of you at home and the other genuinely elsewhere is what works.</p>
       <div class="row">
         <button id="b-host">Open a thread</button>
         <button id="b-join">Take a thread</button>
@@ -67,26 +68,26 @@
 
     <div class="step" id="s-host">
       <p>Send this to them.</p>
-      <textarea id="t-offer" readonly></textarea>
+      <textarea autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="t-offer" readonly></textarea>
       <div class="row" style="margin-bottom:22px">
         <button id="b-copy1">Copy</button>
       </div>
       <p class="warn">This contains your network address. Send it the way you would send
         a phone number — to them, not to a room.</p>
       <p>They will send one back. Put it here.</p>
-      <textarea id="t-answer" placeholder="paste their reply"></textarea>
+      <textarea autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="t-answer" placeholder="paste their reply"></textarea>
       <div class="row"><button id="b-tie">Tie it</button></div>
     </div>
 
     <div class="step" id="s-join">
       <p>Put theirs here.</p>
-      <textarea id="t-in" placeholder="paste what they sent"></textarea>
+      <textarea autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="t-in" placeholder="paste what they sent"></textarea>
       <div class="row"><button id="b-take">Take it</button></div>
     </div>
 
     <div class="step" id="s-reply">
       <p>Send this back to them, and wait.</p>
-      <textarea id="t-reply" readonly></textarea>
+      <textarea autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="t-reply" readonly></textarea>
       <div class="row"><button id="b-copy2">Copy</button></div>
       <p class="warn">This contains your network address too.</p>
     </div>
@@ -166,17 +167,15 @@ var wire = (function () {
                 ' missing or changed. copy it again and send it as plain text,' +
                 ' not as a link and not in anything that might tidy it up.';
 
+  /* this used to be deflated first. it saved 270 characters out of 870 — and
+     it cost the whole thing working between two different phones, because the
+     browser that squashes it and the browser that has to unsquash it are not
+     the same browser, and one of them may be a few years older than the
+     other. a key nobody can open is not worth a quarter of the length. it can
+     still open a squashed one it is sent, if it is able. */
   async function pack(o) {
-    var json = JSON.stringify(o), body, tag = 'B0';
-    if (window.CompressionStream) {
-      try {
-        var cs = new CompressionStream('deflate-raw');
-        var buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
-        body = bytesToB64(new Uint8Array(buf)); tag = 'B1';
-      } catch (e) { /* fall through */ }
-    }
-    if (body === undefined) body = bytesToB64(new TextEncoder().encode(json));
-    return tag + mark(body) + body;
+    var body = bytesToB64(new TextEncoder().encode(JSON.stringify(o)));
+    return 'B0' + mark(body) + body;
   }
   async function unpack(s) {
     s = (s || '').replace(/\s+/g, '');
@@ -193,9 +192,13 @@ var wire = (function () {
     try { bytes = b64ToBytes(body); } catch (e) { throw new Error(DAMAGED); }
     try {
       if (tag === 'A0' || tag === 'B0') return JSON.parse(new TextDecoder().decode(bytes));
+      if (!window.DecompressionStream)
+        throw new Error('that thread was squashed by a newer browser than this' +
+                        ' one. ask them to open the page again and make a new' +
+                        ' one — it will come out longer, and this will open it.');
       var ds = new DecompressionStream('deflate-raw');
       buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
-    } catch (e) { throw new Error(DAMAGED); }
+    } catch (e) { throw new Error(/squashed/.test(e.message) ? e.message : DAMAGED); }
     if (buf.byteLength > MAXPASTE * 8) throw new Error('that is far too long to be a thread');
     var o;
     try { o = JSON.parse(new TextDecoder().decode(buf)); } catch (e) { throw new Error(DAMAGED); }
@@ -259,10 +262,12 @@ var wire = (function () {
       why += 'nothing outside this machine answered, so neither of you could work' +
              ' out your own address.';
     else
-      why += 'no way through was found between you. if you are both on the same' +
-             ' web — one router, one wifi, the same room — that is why, and it is' +
-             ' the one arrangement that will not work. put one of you on mobile' +
-             ' data and open a new thread.';
+      why += 'no way through was found between you. two on the same web — one' +
+             ' router, one wifi, the same room — cannot see each other through' +
+             ' it, and neither can two phones on mobile data, because the phone' +
+             ' networks hide everyone behind the same wall. one of you on home' +
+             ' wifi and the other somewhere else entirely is the arrangement' +
+             ' that works.';
     tell(why + ' ' + report());
     fail = why;
   }
@@ -1377,14 +1382,25 @@ once('b-tie', async function () {
   await wire.tie(document.getElementById('t-answer').value);
   tell('waiting for it to take... ' + wire.report());
 });
+/* copying on a phone: a readonly textarea will not take a selection on ios,
+   so it is briefly made writable and read-only again afterwards. and if the
+   clipboard refuses — it does, sometimes, and quietly — the text is left
+   selected so that a long press has something to hold on to. a key copied by
+   hand and half missed is the failure that looks like every other failure. */
 function copier(id) {
   return function () {
     var t = document.getElementById(id);
-    t.select(); t.setSelectionRange(0, 99999);
-    if (navigator.clipboard)
-      navigator.clipboard.writeText(t.value).then(function () { tell('copied.'); },
-                                                  function () { tell('copy it by hand.'); });
-    else { try { document.execCommand('copy'); tell('copied.'); } catch (e) { tell('copy it by hand.'); } }
+    t.removeAttribute('readonly');
+    t.focus(); t.select(); t.setSelectionRange(0, t.value.length);
+    function done(ok) {
+      t.setAttribute('readonly', 'readonly');
+      tell(ok ? 'copied. send it as it is — all of it, as plain text.'
+              : 'it is selected — copy it by hand, and take all of it.');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(t.value).then(function () { done(1); },
+                                                  function () { done(0); });
+    else { try { done(document.execCommand('copy')); } catch (e) { done(0); } }
   };
 }
 document.getElementById('b-copy1').onclick = copier('t-offer');
