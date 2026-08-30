@@ -54,6 +54,11 @@
         <button id="b-host">Open a thread</button>
         <button id="b-join">Take a thread</button>
       </div>
+      <p class="note" style="margin-top:22px">Or go up on your own, with the other end
+        of the rope tied to something that climbs after you. It is the same climb and
+        the same rope — it is for finding out what is wrong with it.<br>
+        <span style="color:#4a525f">tab — take the other one &nbsp;·&nbsp; k — see everything</span></p>
+      <div class="row"><button id="b-alone">Climb alone</button></div>
     </div>
 
     <div class="step" id="s-host">
@@ -432,20 +437,28 @@ var CAST_MIN = 0.55, CAST_MAX = 2.15;
 var STILL = 0.09;             /* slower than this and your eyes start to work */
 var SIGHT_LO = 0.13, SIGHT_HI = 0.62;
 
-var me = { x: 0.35, y: 0.5, vx: 0, vy: 0, hook: -1, len: HANG, still: 1, sight: SIGHT_LO };
-var you = { x: 0.65, y: 0.5, vx: 0, vy: 0, hook: -1, sx: 0.65, sy: 0.5 };
-var shot = null;              /* a cast in the air                           */
+/* the two of them are the same kind of thing, and the same code moves either.
+   over a wire only your own one is moved here and the other arrives already
+   moved; on your own, both are moved here and one of them is driven by a very
+   small brain. either way it is the same physics, which is the point: a climb
+   on your own is worth nothing as a test if it is not the real one. */
+function climber(x, y) {
+  return { x: x, y: y, vx: 0, vy: 0, hook: -1, len: HANG, still: 1,
+           sight: SIGHT_LO, shot: null, sx: x, sy: y, was: [], think: 0 };
+}
 
-var host = false, live = false;
+var A = climber(0.35, 0.5), B = climber(0.65, 0.5);
+var me = A, you = B;
+var host = false, live = false, solo = false;
 var run = { n: 0, phase: 'wait', why: '', dread: 0, over: 0, high: 0, best: 0 };
 var spider = { on: 0, x: 0.5, y: 0, vy: 0, hunt: 0, look: 0 };
 
 function begin(sd) {
   run.n++; run.phase = 'climb'; run.why = ''; run.over = 0; run.dread = 0; run.high = 0;
   grow(sd);
-  me.x = 0.35; me.y = 0.5; me.vx = me.vy = 0; me.hook = -1; me.len = HANG; me.still = 1;
-  you.x = 0.65; you.y = 0.5; you.vx = you.vy = 0; you.hook = -1; you.sx = 0.65; you.sy = 0.5;
-  shot = null;
+  var a = climber(0.35, 0.5), b = climber(0.65, 0.5);
+  for (var k in a) { A[k] = a[k]; B[k] = b[k]; }
+  B.x = 0.65; B.sx = 0.65;
   spider.on = 0; spider.hunt = 0; spider.y = TOP + 3;
 }
 
@@ -464,16 +477,17 @@ function win() {
 
 /* ------------------------------------------------------------- the casting */
 
-function cast(dx, dy, power) {
-  if (run.phase !== 'climb' || shot) return;
+function cast(a, dx, dy, power) {
+  if (run.phase !== 'climb' || a.shot) return;
   var d = Math.sqrt(dx*dx + dy*dy) || 1;
   var sp = CAST_MIN + (CAST_MAX - CAST_MIN) * power;
   /* thrown the opposite way to the pull, like anything worth throwing */
-  shot = { x: me.x, y: me.y, x0: me.x, y0: me.y, vx: -dx / d * sp, vy: -dy / d * sp, t: 0 };
-  sound.cast();
+  a.shot = { x: a.x, y: a.y, x0: a.x, y0: a.y, vx: -dx / d * sp, vy: -dy / d * sp, t: 0 };
+  if (a === me) sound.cast();
 }
 
-function flyShot(dt) {
+function flyShot(a, dt) {
+  var shot = a.shot;
   if (!shot) return;
   shot.t += dt;
   shot.vy -= G * 0.55 * dt;
@@ -485,84 +499,85 @@ function flyShot(dt) {
   var gx = nx - shot.x0, gy = ny - shot.y0;
   var clear = gx*gx + gy*gy > CLEAR*CLEAR;
   for (var i = 0; clear && i < nodes.length; i++) {
-    if (i === me.hook) continue;           /* nor the one you are already on */
+    if (i === a.hook) continue;            /* nor the one you are already on */
     var n = nodes[i];
     if (Math.abs(n.y - ny) > 0.4) continue;
     var ax = n.x - nx, ay = n.y - ny;
     if (ax*ax + ay*ay < CATCH*CATCH) {
-      me.hook = i;
-      me.len = Math.max(HANG, Math.sqrt((me.x-n.x)*(me.x-n.x) + (me.y-n.y)*(me.y-n.y)));
-      shot = null; sound.catch_();
+      a.hook = i;
+      a.len = Math.max(HANG, Math.sqrt((a.x-n.x)*(a.x-n.x) + (a.y-n.y)*(a.y-n.y)));
+      a.shot = null; if (a === me) sound.catch_();
       return;
     }
   }
   shot.x = nx; shot.y = ny;
-  if (shot.t > 1.6 || shot.x < LEFT - 0.05 || shot.x > RIGHT + 0.05 || shot.y < me.y - 1.2) {
-    shot = null; sound.miss();
+  if (shot.t > 1.6 || shot.x < LEFT - 0.05 || shot.x > RIGHT + 0.05 || shot.y < a.y - 1.2) {
+    a.shot = null; if (a === me) sound.miss();
   }
 }
 
 /* -------------------------------------------------------------- the moving */
 
-function step(dt) {
+function step(a, o, dt) {
   var i;
-  flyShot(dt);
+  flyShot(a, dt);
 
-  me.vy -= G * dt;
+  a.vy -= G * dt;
 
   /* what the other end of the rope is doing to you */
-  var dx = you.sx - me.x, dy = you.sy - me.y;
+  var dx = o.sx - a.x, dy = o.sy - a.y;
   var d = Math.sqrt(dx*dx + dy*dy) || 1e-5;
   if (d > REST) {
     var f = (d - REST) * PULL * dt;
-    me.vx += dx / d * f; me.vy += dy / d * f;
+    a.vx += dx / d * f; a.vy += dy / d * f;
   }
 
-  me.vx -= me.vx * DRAG * dt;
-  me.vy -= me.vy * DRAG * dt;
-  me.x += me.vx * dt; me.y += me.vy * dt;
+  a.vx -= a.vx * DRAG * dt;
+  a.vy -= a.vy * DRAG * dt;
+  a.x += a.vx * dt; a.y += a.vy * dt;
 
   /* hanging off something: you come up the line to it, and then you stop */
-  if (me.hook >= 0) {
-    var n = nodes[me.hook];
-    if (me.len > HANG) me.len = Math.max(HANG, me.len - HAUL * dt);
-    var ox = me.x - n.x, oy = me.y - n.y;
+  if (a.hook >= 0) {
+    var n = nodes[a.hook];
+    if (a.len > HANG) a.len = Math.max(HANG, a.len - HAUL * dt);
+    var ox = a.x - n.x, oy = a.y - n.y;
     var od = Math.sqrt(ox*ox + oy*oy) || 1e-5;
-    if (od > me.len) {
-      me.x = n.x + ox / od * me.len;
-      me.y = n.y + oy / od * me.len;
-      var radial = (me.vx * ox + me.vy * oy) / od;
-      if (radial > 0) { me.vx -= ox / od * radial; me.vy -= oy / od * radial; }
+    if (od > a.len) {
+      a.x = n.x + ox / od * a.len;
+      a.y = n.y + oy / od * a.len;
+      var radial = (a.vx * ox + a.vy * oy) / od;
+      if (radial > 0) { a.vx -= ox / od * radial; a.vy -= oy / od * radial; }
     }
   }
 
-  if (me.x < LEFT) { me.x = LEFT; me.vx = Math.abs(me.vx) * 0.3; }
-  if (me.x > RIGHT) { me.x = RIGHT; me.vx = -Math.abs(me.vx) * 0.3; }
-  if (me.y < 0.2) { me.y = 0.2; me.vy = Math.max(0, me.vy); }
+  if (a.x < LEFT) { a.x = LEFT; a.vx = Math.abs(a.vx) * 0.3; }
+  if (a.x > RIGHT) { a.x = RIGHT; a.vx = -Math.abs(a.vx) * 0.3; }
+  if (a.y < 0.2) { a.y = 0.2; a.vy = Math.max(0, a.vy); }
 
   /* how still you are, and therefore how much of it you can see */
-  var sp = Math.sqrt(me.vx*me.vx + me.vy*me.vy);
-  var moving = sp > STILL || !!shot;
-  me.still = moving ? Math.max(0, me.still - dt * 3.4) : Math.min(1, me.still + dt * 0.85);
-  var want = SIGHT_LO + (SIGHT_HI - SIGHT_LO) * (me.still * me.still);
-  me.sight += (want - me.sight) * Math.min(1, dt * 2.4);
+  var sp = Math.sqrt(a.vx*a.vx + a.vy*a.vy);
+  var moving = sp > STILL || !!a.shot;
+  a.still = moving ? Math.max(0, a.still - dt * 3.4) : Math.min(1, a.still + dt * 0.85);
+  var want = SIGHT_LO + (SIGHT_HI - SIGHT_LO) * (a.still * a.still);
+  a.sight += (want - a.sight) * Math.min(1, dt * 2.4);
 
-  if (me.y > run.high) run.high = me.y;
+  if (a.y > run.high) run.high = a.y;
 
   /* the doors. through one gently and it lets you by; through one in a hurry
      and it goes, and she hears it go */
   for (i = 0; i < doors.length; i++) {
     var dr = doors[i];
-    var was = dr.was || 0, now = me.y > dr.y ? 1 : -1;
-    dr.was = now;
+    /* which side of it each of them was on, kept per climber */
+    var was = a.was[i] || 0, now = a.y > dr.y ? 1 : -1;
+    a.was[i] = now;
     if (was && was !== now && !dr.torn) {
-      if (Math.abs(me.vy) > 0.40) { dr.torn = 1; run.dread = Math.min(1, run.dread + 0.22); sound.tear(); }
-      else sound.part();
+      if (Math.abs(a.vy) > 0.40) { dr.torn = 1; run.dread = Math.min(1, run.dread + 0.22); sound.tear(); }
+      else if (a === me) sound.part();
     }
     /* both of you still, at a torn one, and it can be put back */
     if (dr.torn) {
-      var close = Math.abs(me.y - dr.y) < 0.16 && Math.abs(you.sy - dr.y) < 0.16;
-      var quiet = me.still > 0.55 && Math.abs(you.vx) + Math.abs(you.vy) < STILL;
+      var close = Math.abs(a.y - dr.y) < 0.16 && Math.abs(o.sy - dr.y) < 0.16;
+      var quiet = a.still > 0.55 && Math.abs(o.vx) + Math.abs(o.vy) < STILL;
       if (close && quiet) {
         dr.mend += dt;
         if (dr.mend > 2.6) { dr.torn = 0; dr.mend = 0; run.dread = Math.max(0, run.dread - 0.22); sound.mend(); }
@@ -576,7 +591,42 @@ function step(dt) {
     if (run.over > FUSE) lose('the rope came apart');
   } else run.over = Math.max(0, run.over - dt * 2);
 
-  if (me.y > TOP) win();
+  if (a.y > TOP) win();
+}
+
+/* --------------------------------------------------------- the small brain
+
+   only on your own. it holds while you are moving, and when you have come to
+   rest above it, it throws for the nearest thing over its head and comes up
+   after you. it is not clever and is not meant to be: it is there so the rope
+   has something on the other end of it.                                     */
+
+function brain(a, o, dt) {
+  if (run.phase !== 'climb' || a.shot) return;
+  a.think -= dt;
+  /* it holds while you climb, unless it has been left so far below that the
+     rope is about to take it off the wall, at which point holding is no
+     longer the useful thing to be doing */
+  var urgent = a.y < o.y - (SNAP - REST) * 0.55;
+  if (!urgent && (o.still < 0.55 || o.shot)) return;
+  if (a.hook >= 0 && a.len > HANG + 0.01) return;    /* still coming up */
+  if (a.think > 0) return;
+  if (a.y > o.y - 0.16) return;                /* level enough with them */
+  var best = -1, bd = 1e9;
+  for (var i = 0; i < nodes.length; i++) {
+    if (i === a.hook) continue;
+    var n = nodes[i], dy = n.y - a.y;
+    if (dy < 0.18) continue;
+    var dx = n.x - a.x, d = Math.sqrt(dx*dx + dy*dy);
+    if (d > 0.60 || d < CLEAR * 1.2) continue;
+    if (d < bd) { bd = d; best = i; }
+  }
+  if (best < 0) { a.think = 0.4; return; }
+  var nb = nodes[best];
+  var bx = nb.x - a.x, by = nb.y - a.y, bdd = Math.sqrt(bx*bx + by*by);
+  cast(a, -bx, -by, Math.min(1, bdd / 0.60));
+  /* it takes its time when there is time, and does not when there is not */
+  a.think = urgent ? 0.28 + Math.random() * 0.25 : 1.0 + Math.random() * 0.8;
 }
 
 /* --------------------------------------------------------------- and her
@@ -615,7 +665,7 @@ function herStep(dt) {
      is making it move */
   spider.on = 2;
   if (spider.y > TOP + 2.4) spider.y = TOP + 2.4;
-  var mySp = Math.sqrt(me.vx*me.vx + me.vy*me.vy) + (shot ? 0.5 : 0);
+  var mySp = Math.sqrt(me.vx*me.vx + me.vy*me.vy) + (me.shot ? 0.5 : 0);
   var yrSp = Math.abs(you.vx) + Math.abs(you.vy);
   var loud = mySp > yrSp ? 1 : -1;
   var tx = loud > 0 ? me.x : you.sx, ty = loud > 0 ? me.y : you.sy;
@@ -639,14 +689,19 @@ function frame(ms) {
   var dt = Math.min(now - last, 0.05) || 0.016;
   last = now; time = now;
 
-  if (run.phase === 'climb') step(dt);
+  if (run.phase === 'climb') {
+    step(me, you, dt);
+    /* on your own, the other end of the rope is moved here too */
+    if (solo) { brain(you, me, dt); step(you, me, dt); }
+  }
   if (host) herStep(dt);
 
   you.sx += (you.x - you.sx) * Math.min(1, dt * 13);
   you.sy += (you.y - you.sy) * Math.min(1, dt * 13);
+  if (solo) { me.sx = me.x; me.sy = me.y; }
 
   sent += dt;
-  if (live && sent > 0.033) {
+  if (live && !solo && sent > 0.033) {
     sent = 0;
     var p = { x: me.x, y: me.y, vx: me.vx, vy: me.vy, h: me.hook };
     if (host) {
@@ -768,12 +823,12 @@ function draw() {
   }
 
   /* the cast, in the air */
-  if (shot) {
+  if (me.shot) {
     g.strokeStyle = 'rgba(210,226,255,0.55)';
     g.lineWidth = 1 * U;
-    g.beginPath(); g.moveTo(mx, my); g.lineTo(sx(shot.x), sy(shot.y)); g.stroke();
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(sx(me.shot.x), sy(me.shot.y)); g.stroke();
     g.fillStyle = 'rgba(236,244,255,0.9)';
-    g.beginPath(); g.arc(sx(shot.x), sy(shot.y), 2.4 * U, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(sx(me.shot.x), sy(me.shot.y), 2.4 * U, 0, Math.PI * 2); g.fill();
   }
 
   /* the rope to them: the near end of it only, so you get which way they are
@@ -810,6 +865,49 @@ function draw() {
     g.lineWidth = 0.8 * U;
     g.beginPath(); g.moveTo(spx, spy - 400 * U); g.lineTo(spx, spy); g.stroke();
     drawHer(spx, spy, sa);
+  }
+
+  /* with the lights on: the other one, and the shaft they are in, and what
+     the numbers are doing. only ever on your own. */
+  if (showAll) {
+    var ox = sx(you.sx), oy = sy(you.sy);
+    g.strokeStyle = 'rgba(255,190,120,0.45)';
+    g.lineWidth = 1 * U;
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(ox, oy); g.stroke();
+    g.fillStyle = 'rgba(255,190,120,0.9)';
+    g.beginPath(); g.arc(ox, oy, 4 * U, 0, Math.PI * 2); g.fill();
+    if (you.hook >= 0) {
+      var yn = nodes[you.hook];
+      g.strokeStyle = 'rgba(255,190,120,0.30)';
+      g.beginPath(); g.moveTo(ox, oy); g.lineTo(sx(yn.x), sy(yn.y)); g.stroke();
+    }
+    if (you.shot) {
+      g.fillStyle = 'rgba(255,190,120,0.8)';
+      g.beginPath(); g.arc(sx(you.shot.x), sy(you.shot.y), 2.4 * U, 0, Math.PI * 2); g.fill();
+    }
+    for (var q = 0; q < nodes.length; q++) {
+      var nq = nodes[q];
+      if (Math.abs(nq.y - me.y) > 1.4) continue;
+      g.fillStyle = 'rgba(120,170,255,0.35)';
+      g.fillRect(sx(nq.x) - 1.5 * U, sy(nq.y) - 1.5 * U, 3 * U, 3 * U);
+    }
+    g.font = (10 * U) + 'px "Courier New",courier,monospace';
+    g.textAlign = 'left';
+    g.fillStyle = 'rgba(150,180,220,0.7)';
+    var lines = [
+      'you  y ' + me.y.toFixed(2) + '  hook ' + me.hook + '  still ' + me.still.toFixed(2) +
+        '  sight ' + me.sight.toFixed(2),
+      'them y ' + you.y.toFixed(2) + '  hook ' + you.hook + '  still ' + you.still.toFixed(2),
+      'rope ' + Math.hypot(you.sx - me.x, you.sy - me.y).toFixed(2) +
+        ' / snap ' + SNAP + '  over ' + run.over.toFixed(2),
+      'dread ' + run.dread.toFixed(2) + '  torn ' +
+        doors.filter(function (d) { return d.torn; }).length + '/' + doors.length +
+        '  her ' + spider.on + ' y ' + spider.y.toFixed(1),
+      'high ' + run.high.toFixed(2) + ' / ' + TOP
+    ];
+    for (var li = 0; li < lines.length; li++)
+      g.fillText(lines[li], 10 * U, (76 + li * 13) * U);
+    g.textAlign = 'center';
   }
 
   /* you */
@@ -869,7 +967,12 @@ function drawWords() {
   }
   if (run.phase === 'wait') {
     g.fillStyle = 'rgba(140,152,172,0.7)';
-    g.fillText(host ? 'press to begin' : 'waiting for them', W * 0.5, H * 0.5 + 70 * U);
+    g.fillText(host || solo ? 'press to begin' : 'waiting for them', W * 0.5, H * 0.5 + 70 * U);
+  }
+  if (solo && run.phase === 'climb') {
+    g.font = (9 * U) + 'px "Courier New",courier,monospace';
+    g.fillStyle = 'rgba(110,122,142,0.4)';
+    g.fillText(me === A ? 'holding the first' : 'holding the second', W * 0.5, H - 20 * U);
   }
 }
 
@@ -884,7 +987,7 @@ function talking() { return talk.held || talk.latch; }
 
 function drawSling() {
   if (!sling.on) {
-    if (run.phase === 'climb' && !shot) {
+    if (run.phase === 'climb' && !me.shot) {
       g.strokeStyle = 'rgba(120,140,175,0.14)';
       g.lineWidth = 1 * U;
       g.beginPath(); g.arc(W * 0.5, H - 74 * U, 26 * U, 0, Math.PI * 2); g.stroke();
@@ -956,7 +1059,7 @@ canvas.addEventListener('pointerdown', function (e) {
     return;
   }
   if (run.phase !== 'climb') { go(); return; }
-  if (shot) return;
+  if (me.shot) return;
   sling.on = true; sling.id = e.pointerId;
   sling.ox = _p[0]; sling.oy = _p[1]; sling.x = _p[0]; sling.y = _p[1];
   if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
@@ -979,7 +1082,7 @@ function release(e) {
     var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
     var d = Math.sqrt(dx*dx + dy*dy);
     sling.on = false; sling.id = null;
-    if (d > 14 * U) cast(dx, dy, Math.min(1, d / (SLING_R * U)));
+    if (d > 14 * U) cast(me, dx, dy, Math.min(1, d / (SLING_R * U)));
   }
 }
 canvas.addEventListener('pointerup', release);
@@ -994,12 +1097,31 @@ document.addEventListener('keydown', function (e) {
   sound.start(); sound.resume();
   if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); go(); }
   if (e.key.toLowerCase() === 'm') { talk.latch = !talk.latch; setMic(); }
+  if (e.key === 'Tab') { e.preventDefault(); swap(); }
+  if (e.key.toLowerCase() === 'k' && solo) showAll = !showAll;
 });
+var showAll = false;
 
 function go() {
   if (!live || run.phase === 'climb') return;
+  if (solo) { begin((Math.random() * 1e9) | 0); return; }
   if (host) { var sd = (Math.random() * 1e9) | 0; begin(sd); wire.sure({ go: sd }); }
   else wire.sure({ go: 1 });
+}
+
+/* on your own you can put yourself on the other end of the rope, which is the
+   only way to see what the person you cannot see is actually doing */
+function swap() {
+  if (!solo) return;
+  var t = me; me = you; you = t;
+  me.sx = me.x; me.sy = me.y;
+}
+
+function alone() {
+  solo = true; live = true; host = true;
+  panel.className = 'gone';
+  sound.start(); sound.resume();
+  run.phase = 'wait';
 }
 
 function resize() {
@@ -1064,6 +1186,7 @@ document.getElementById('b-host').onclick = async function () {
   catch (e) { tell(String(e.message || e)); }
 };
 document.getElementById('b-join').onclick = function () { show('s-join'); tell(''); };
+document.getElementById('b-alone').onclick = function () { alone(); };
 document.getElementById('b-take').onclick = async function () {
   tell('taking it...');
   try {
@@ -1094,10 +1217,13 @@ grow(1);
 requestAnimationFrame(frame);
 
 /* for driving two of these against each other */
-window.__ascend = { wire: wire, run: run, me: me, you: you, nodes: nodes, doors: doors,
+window.__ascend = { wire: wire, run: run, nodes: nodes, doors: doors,
+                    get me() { return me; }, get you() { return you; },
                     spider: spider, sound: sound, cast: cast,
                     live: function () { return live; }, host: function () { return host; },
-                    talking: talking, shot: function () { return shot; } };
+                    talking: talking, shot: function () { return me.shot; },
+                    A: A, B: B, alone: alone, swap: swap,
+                    solo: function () { return solo; } };
 
 })();
 </script>
