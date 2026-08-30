@@ -1210,10 +1210,14 @@ function release(e) {
     var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
     var d = Math.sqrt(dx*dx + dy*dy);
     sling.on = false; sling.id = null;
-    /* the pull is measured down the page and the world is measured up it, so
-       one has to be turned into the other. without this the aim showed you one
-       way and the throw went the other, on the up-and-down only. */
-    if (d > 14 * U) cast(me, dx, -dy, Math.min(1, d / (SLING_R * U)));
+    /* the pull is measured in pixels and the world is not. across, a world
+       unit is W pixels wide; up, it is H tall — and on a tall phone those are
+       nowhere near the same. an angle read straight off the screen therefore
+       arrives in the world leaning, which is why the shot sat a few degrees
+       off the line you drew. dividing each side by its own scale (and
+       flipping y, since the page counts down and the world counts up) hands
+       cast the direction you actually aimed. */
+    if (d > 14 * U) cast(me, dx / W, -dy / H, Math.min(1, d / (SLING_R * U)));
   }
 }
 canvas.addEventListener('pointerup', release);
