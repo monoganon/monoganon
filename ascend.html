@@ -50,11 +50,10 @@
          and you keep swapping until you are at the top or she has you.</p>
       <p class="note">Nothing runs in between. To be tied together you must pass a piece
          of text back and forth once, by whatever way you already talk.</p>
-      <p class="warn">This goes straight from one of you to the other, with nothing in
-         between, and there are two places it cannot go. Not between two machines on the
-         same wifi — they share an address and cannot find each other through it. And not
-         between two phones on mobile data — the phone networks put everyone behind the
-         same wall. One of you at home and the other genuinely elsewhere is what works.</p>
+      <p class="warn">This goes straight from one of you to the other with nothing in
+         between, which most networks allow and some quietly do not. If it will not tie,
+         it is the networks and not either of you — one of you changing network, either
+         way, is the thing that fixes it.</p>
       <div class="row">
         <button id="b-host">Open a thread</button>
         <button id="b-join">Take a thread</button>
@@ -127,7 +126,7 @@ var wire = (function () {
   var waiting = [];
   /* what the two browsers managed to find out about themselves, kept so that
      a failure can be described rather than just announced */
-  var found = { host: 0, mdns: 0, public: 0, relay: 0 };
+  var found = { host: 0, mdns: 0, public: 0, relay: 0, six: 0 };
   var ice = '', conn = '';
 
   var ICE = [{ urls: ['stun:global.stun.twilio.com:3478', 'stun:stun.l.google.com:19302'] }];
@@ -240,6 +239,11 @@ var wire = (function () {
     pc.onicecandidate = function (e) {
       if (!e.candidate || !e.candidate.candidate) return;
       var c = e.candidate.candidate;
+      /* an address with colons in it is v6, and a v6 address is usually a real
+         one with nothing in front of it. that is the single thing that decides
+         whether two phones on their own networks can reach each other, so it
+         is worth knowing which of you had one. */
+      if (/ [0-9a-f]*:[0-9a-f:]+ /i.test(c)) found.six++;
       if (/ typ relay/.test(c)) found.relay++;
       else if (/ typ srflx/.test(c)) found.public++;
       else if (/ typ host/.test(c)) {
@@ -262,20 +266,20 @@ var wire = (function () {
       why += 'nothing outside this machine answered, so neither of you could work' +
              ' out your own address.';
     else
-      why += 'no way through was found between you. two on the same web — one' +
-             ' router, one wifi, the same room — cannot see each other through' +
-             ' it, and neither can two phones on mobile data, because the phone' +
-             ' networks hide everyone behind the same wall. one of you on home' +
-             ' wifi and the other somewhere else entirely is the arrangement' +
-             ' that works.';
+      why += 'no way through was found between you. it depends on the two' +
+             ' networks and not on either of you: some let a thread through and' +
+             ' some do not, and there is no way to tell which until it is tried.' +
+             ' if either of you can change network — off the wifi, onto it, a' +
+             ' different one — that is the thing to change, and then open a new' +
+             ' thread. the same pair of networks will fail the same way twice.';
     tell(why + ' ' + report());
     fail = why;
   }
 
   function report() {
     return '[' + found.host + ' local' + (found.mdns ? ' by name' : '') +
-           ', ' + found.public + ' public, ' + found.relay + ' relayed · ' +
-           (ice || '-') + '/' + (conn || '-') + ']';
+           ', ' + found.public + ' public, ' + found.six + ' v6, ' +
+           found.relay + ' relayed · ' + (ice || '-') + '/' + (conn || '-') + ']';
   }
 
   var fail = '';
