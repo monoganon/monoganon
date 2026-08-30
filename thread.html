@@ -169,8 +169,10 @@ var wire = (function () {
     var tag = s.slice(0, 2), body, sum = '';
     if (tag === 'U0' || tag === 'U1') { sum = s.slice(2, 9); body = s.slice(9); }
     else if (tag === 'T0' || tag === 'T1') body = s.slice(2);   /* the older kind */
-    else throw new Error('that does not look like a thread. it should be a' +
-                         ' single long run of letters, all of it.');
+    else throw new Error('that does not look like a thread. either it is not' +
+                         ' one, or this page is an older copy than the one that' +
+                         ' made it — reload it, properly, and have them send it' +
+                         ' again. it should be a single long run of letters.');
     if (sum && sum !== mark(body)) throw new Error(DAMAGED);
     var bytes, buf;
     try { bytes = b64ToBytes(body); } catch (e) { throw new Error(DAMAGED); }
