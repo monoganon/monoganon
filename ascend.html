@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Ascend</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
+               font-family:"Courier New",courier,monospace; color:#c9d2e0;
+               -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  canvas { position:fixed; left:0; top:0; display:block; width:100vw; height:100vh;
+           touch-action:none; }
+
+  #panel { position:fixed; left:0; top:0; right:0; bottom:0; display:flex;
+           align-items:center; justify-content:center; background:#000; z-index:2;
+           overflow:auto; }
+  #panel.gone { display:none; }
+  .card { width:min(92vw, 640px); padding:28px 0; }
+  h1 { font-size:13px; letter-spacing:0.5em; text-transform:uppercase;
+       font-weight:normal; margin:0 0 1.6em 0; color:#7f8b9e; }
+  p  { font-size:12px; line-height:1.9; color:#8d97a8; margin:0 0 1.4em 0; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button { font:inherit; font-size:11px; letter-spacing:0.28em; text-transform:uppercase;
+           color:#c9d2e0; background:transparent; border:1px solid #39424f;
+           padding:11px 16px; cursor:pointer; transition:border-color .25s, color .25s; }
+  button:hover { border-color:#8d97a8; color:#fff; }
+  textarea { width:100%; box-sizing:border-box; height:88px; resize:none; margin:0 0 12px 0;
+             font:inherit; font-size:10px; line-height:1.5; color:#8d97a8;
+             background:#07080b; border:1px solid #232a34; padding:10px; }
+  .step { display:none; }
+  .step.on { display:block; }
+  .note { color:#5c6675; font-size:11px; }
+  .warn { color:#6f6357; font-size:11px; border-left:1px solid #3a332b; padding-left:12px; }
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+
+<div id="panel">
+  <div class="card">
+    <h1>Ascend</h1>
+
+    <div class="step on" id="s-start">
+      <p>Two of you, roped together, at the bottom of something tall.<br>
+         You will not see each other. You will feel each other on the rope,
+         and hear each other, and that is all there is.</p>
+      <p class="note">Whoever is still can see. Whoever is moving cannot. So one of you
+         holds and looks and talks, and the other one climbs blind, and then you swap,
+         and you keep swapping until you are at the top or she has you.</p>
+      <p class="note">Nothing runs in between. To be tied together you must pass a piece
+         of text back and forth once, by whatever way you already talk.</p>
+      <div class="row">
+        <button id="b-host">Open a thread</button>
+        <button id="b-join">Take a thread</button>
+      </div>
+    </div>
+
+    <div class="step" id="s-host">
+      <p>Send this to them.</p>
+      <textarea id="t-offer" readonly></textarea>
+      <div class="row" style="margin-bottom:22px">
+        <button id="b-copy1">Copy</button>
+      </div>
+      <p class="warn">This contains your network address. Send it the way you would send
+        a phone number — to them, not to a room.</p>
+      <p>They will send one back. Put it here.</p>
+      <textarea id="t-answer" placeholder="paste their reply"></textarea>
+      <div class="row"><button id="b-tie">Tie it</button></div>
+    </div>
+
+    <div class="step" id="s-join">
+      <p>Put theirs here.</p>
+      <textarea id="t-in" placeholder="paste what they sent"></textarea>
+      <div class="row"><button id="b-take">Take it</button></div>
+    </div>
+
+    <div class="step" id="s-reply">
+      <p>Send this back to them, and wait.</p>
+      <textarea id="t-reply" readonly></textarea>
+      <div class="row"><button id="b-copy2">Copy</button></div>
+      <p class="warn">This contains your network address too.</p>
+    </div>
+
+    <p class="note" id="say" style="margin-top:22px"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+var canvas = document.getElementById('v');
+var g = canvas.getContext('2d');
+var panel = document.getElementById('panel');
+var say = document.getElementById('say');
+
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+var W = 1, H = 1, U = 1;
+
+function tell(s) { say.textContent = s; }
+function show(id) {
+  var st = document.querySelectorAll('.step');
+  for (var i = 0; i < st.length; i++) st[i].className = 'step' + (st[i].id === id ? ' on' : '');
+}
+
+/* ------------------------------------------------------------------- wire
+
+   the same as the thread's: no server, one lump of text each way by hand, and
+   after that the two browsers are talking straight to each other. positions go
+   down a channel that is allowed to drop things; anything said once and needed
+   goes down one that is not.                                                */
+
+var wire = (function () {
+  var pc = null, dc = null, cc = null, mine = null, role = null;
+  var onMsg = null, onUp = null, onVoice = null;
+  var waiting = [];
+
+  var ICE = [{ urls: ['stun:global.stun.twilio.com:3478', 'stun:stun.l.google.com:19302'] }];
+  var MAXPASTE = 24000;        /* a lump this big is not a thread, it is a trap */
+
+  function bytesToB64(b) {
+    var s = '', CH = 0x8000;
+    for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
+    return btoa(s);
+  }
+  function b64ToBytes(s) {
+    var raw = atob(s), b = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
+    return b;
+  }
+
+  async function pack(o) {
+    var json = JSON.stringify(o);
+    if (window.CompressionStream) {
+      try {
+        var cs = new CompressionStream('deflate-raw');
+        var buf = await new Response(new Blob([json]).stream().pipeThrough(cs)).arrayBuffer();
+        return 'A1' + bytesToB64(new Uint8Array(buf));
+      } catch (e) { /* fall through */ }
+    }
+    return 'A0' + bytesToB64(new TextEncoder().encode(json));
+  }
+  async function unpack(s) {
+    s = (s || '').replace(/\s+/g, '');
+    /* a small lump can be made to inflate into a very large one. it would only
+       ever hurt the person who pasted it, but it would hurt them a lot */
+    if (s.length > MAXPASTE) throw new Error('that is far too long to be a thread');
+    var tag = s.slice(0, 2), body = s.slice(2);
+    if (tag !== 'A0' && tag !== 'A1') throw new Error('that does not look like a thread');
+    var bytes = b64ToBytes(body);
+    if (tag === 'A0') return JSON.parse(new TextDecoder().decode(bytes));
+    var ds = new DecompressionStream('deflate-raw');
+    var buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    if (buf.byteLength > MAXPASTE * 8) throw new Error('that is far too long to be a thread');
+    return JSON.parse(new TextDecoder().decode(buf));
+  }
+
+  function gathered() {
+    return new Promise(function (res) {
+      if (pc.iceGatheringState === 'complete') return res();
+      var done = false;
+      var t = setTimeout(finish, 3000);
+      function finish() {
+        if (done) return; done = true;
+        clearTimeout(t);
+        pc.removeEventListener('icegatheringstatechange', check);
+        res();
+      }
+      function check() { if (pc.iceGatheringState === 'complete') finish(); }
+      pc.addEventListener('icegatheringstatechange', check);
+    });
+  }
+
+  function build() {
+    pc = new RTCPeerConnection({ iceServers: ICE });
+    pc.ontrack = function (e) { if (onVoice) onVoice(e.streams[0] || new MediaStream([e.track])); };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')
+        tell('the rope went slack. reload and tie it again.');
+    };
+  }
+
+  function read(e) {
+    var m; try { m = JSON.parse(e.data); } catch (err) { return; }
+    if (m.sdp) return negotiated(m.sdp);
+    if (onMsg) onMsg(m);
+  }
+  function wireChannel(ch) {
+    dc = ch;
+    dc.onopen = function () { if (onUp) onUp(); };
+    dc.onmessage = read;
+  }
+  function wireControl(ch) {
+    cc = ch;
+    cc.onopen = function () { while (waiting.length) sure(waiting.shift()); };
+    cc.onmessage = read;
+  }
+
+  async function host() {
+    role = 'host'; build();
+    wireChannel(pc.createDataChannel('rope', { ordered: false, maxRetransmits: 0 }));
+    wireControl(pc.createDataChannel('say', { ordered: true }));
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered();
+    return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
+  }
+  async function take(blob) {
+    role = 'guest'; build();
+    pc.ondatachannel = function (e) {
+      if (e.channel.label === 'say') wireControl(e.channel); else wireChannel(e.channel);
+    };
+    var o = await unpack(blob);
+    await pc.setRemoteDescription({ type: o.t, sdp: o.s });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await gathered();
+    return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
+  }
+  async function tie(blob) {
+    var a = await unpack(blob);
+    await pc.setRemoteDescription({ type: a.t, sdp: a.s });
+  }
+
+  async function negotiated(d) {
+    if (d.type === 'offer') {
+      await pc.setRemoteDescription(d);
+      if (mine) addMine();
+      await pc.setLocalDescription(await pc.createAnswer());
+      await gathered();
+      sure({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+    } else await pc.setRemoteDescription(d);
+  }
+  function addMine() {
+    var have = pc.getSenders().some(function (s) { return s.track && s.track.kind === 'audio'; });
+    if (!have && mine) pc.addTrack(mine.getAudioTracks()[0], mine);
+  }
+  async function offerVoice() {
+    if (role !== 'host' || !pc) return;
+    if (mine) addMine();
+    else pc.addTransceiver('audio', { direction: 'recvonly' });
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered();
+    sure({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+  }
+
+  function send(o) {
+    if (dc && dc.readyState === 'open') { try { dc.send(JSON.stringify(o)); } catch (e) {} }
+  }
+  function sure(o) {
+    if (cc && cc.readyState === 'open') { try { cc.send(JSON.stringify(o)); } catch (e) {} }
+    else if (waiting.length < 16) waiting.push(o);
+  }
+
+  return {
+    host: host, take: take, tie: tie, send: send, sure: sure, offerVoice: offerVoice,
+    setMic: function (s) { mine = s; },
+    mic: function () { return mine; },
+    role: function () { return role; },
+    on: function (m, u, v) { onMsg = m; onUp = u; onVoice = v; }
+  };
+})();
+
+/* ------------------------------------------------------------------ sound */
+
+var sound = (function () {
+  var ctx = null, started = false, hasVoice = false;
+  var airGain, airLp, strainGain, strainLp, ropeSrc;
+  var voicePan = null, voiceGain = null, voiceEl = null;
+
+  function noise(sec) {
+    var len = ctx.sampleRate * sec, b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
+    var last = 0;
+    for (var i = 0; i < len; i++) { last = (last + (Math.random()*2-1) * 0.05) * 0.995; d[i] = last * 5; }
+    return b;
+  }
+
+  function start() {
+    if (started) return; started = true;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+
+    /* the shaft itself: moving air, a long way down */
+    var a = ctx.createBufferSource(); a.buffer = noise(4); a.loop = true;
+    airLp = ctx.createBiquadFilter(); airLp.type = 'lowpass';
+    airLp.frequency.value = 220; airLp.Q.value = 0.7;
+    airGain = ctx.createGain(); airGain.gain.value = 0.0001;
+    a.connect(airLp); airLp.connect(airGain); airGain.connect(ctx.destination);
+    a.start();
+    airGain.gain.linearRampToValueAtTime(0.10, ctx.currentTime + 6);
+
+    /* the rope, which only speaks when it is asked to do something it would
+       rather not */
+    var s = ctx.createBufferSource(); s.buffer = noise(3); s.loop = true;
+    strainLp = ctx.createBiquadFilter(); strainLp.type = 'bandpass';
+    strainLp.frequency.value = 300; strainLp.Q.value = 1.6;
+    strainGain = ctx.createGain(); strainGain.gain.value = 0;
+    s.connect(strainLp); strainLp.connect(strainGain); strainGain.connect(ctx.destination);
+    s.start(); ropeSrc = s;
+  }
+  function resume() {
+    if (ctx && ctx.state === 'suspended' && ctx.resume) {
+      var r = ctx.resume(); if (r && r.catch) r.catch(function () {});
+    }
+  }
+
+  function voice(stream) {
+    if (!ctx) start();
+    if (!ctx) return;
+    hasVoice = true;
+    voiceEl = document.createElement('audio');
+    voiceEl.srcObject = stream; voiceEl.muted = true; voiceEl.autoplay = true;
+    voiceEl.setAttribute('hidden', '');
+    document.body.appendChild(voiceEl);
+    voiceEl.play().catch(function () {});
+    var src = ctx.createMediaStreamSource(stream);
+    voicePan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    voiceGain = ctx.createGain(); voiceGain.gain.value = 1;
+    if (voicePan) { src.connect(voicePan); voicePan.connect(voiceGain); }
+    else src.connect(voiceGain);
+    voiceGain.connect(ctx.destination);
+  }
+
+  /* side: where they are, left to right. up: how far above or below.
+     strain: how hard the rope is being asked. depth: how high you are.     */
+  function update(side, near, strain, depth) {
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    if (voicePan) voicePan.pan.setTargetAtTime(side * 0.85, t, 0.09);
+    if (voiceGain) voiceGain.gain.setTargetAtTime(0.4 + near * 0.7, t, 0.12);
+    strainGain.gain.setTargetAtTime(strain * strain * 0.30, t, 0.05);
+    strainLp.frequency.setTargetAtTime(230 + strain * 1500, t, 0.05);
+    airLp.frequency.setTargetAtTime(160 + depth * 420, t, 1.5);
+  }
+
+  function ping(f0, f1, dur, type, vol, pan) {
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    var o = ctx.createOscillator(); o.type = type || 'sine';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    var gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(vol || 0.08, t + 0.012);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    var last = gn;
+    if (pan !== undefined && ctx.createStereoPanner) {
+      var p = ctx.createStereoPanner(); p.pan.value = pan;
+      gn.connect(p); last = p;
+    }
+    o.connect(gn); last.connect(ctx.destination);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  function rush(dur, vol, f0, f1) {
+    if (!ctx) return;
+    var t = ctx.currentTime;
+    var s = ctx.createBufferSource(); s.buffer = noise(1); s.loop = true;
+    var bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(f0, t);
+    bp.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    var gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(vol, t + 0.03);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(bp); bp.connect(gn); gn.connect(ctx.destination);
+    s.start(t); s.stop(t + dur + 0.1);
+  }
+
+  return {
+    start: start, resume: resume, voice: voice, update: update,
+    heard: function () { return hasVoice; },
+    cast:  function () { rush(0.34, 0.10, 900, 240); },
+    catch_:function () { ping(300, 150, 0.22, 'sine', 0.13); },
+    miss:  function () { ping(150, 90, 0.5, 'sine', 0.06); },
+    part:  function () { rush(0.5, 0.05, 3200, 1400); },
+    tear:  function () { rush(0.8, 0.20, 2600, 300); ping(220, 60, 0.8, 'sawtooth', 0.10); },
+    mend:  function () { ping(420, 840, 0.9, 'sine', 0.07); },
+    pass:  function (p) { rush(1.9, 0.09, 380, 120); ping(90, 62, 1.6, 'triangle', 0.05, p); },
+    pluck: function (p, v) { ping(180 + v * 260, 60, 0.55, 'triangle', 0.11, p); },
+    won:   function () { ping(392, 784, 1.6, 'sine', 0.10);
+                         setTimeout(function () { ping(587, 1175, 1.8, 'sine', 0.08); }, 300); },
+    lost:  function () { rush(1.4, 0.16, 700, 60); ping(140, 35, 1.5, 'sawtooth', 0.14); }
+  };
+})();
+
+/* -------------------------------------------------------------- the shaft
+
+   grown from a number rather than sent down the wire, so both ends can build
+   exactly the same one out of nothing.                                     */
+
+var TOP = 26;                  /* how far up the top is, in screens          */
+var LEFT = 0.08, RIGHT = 0.92;
+
+function rng(seed) {
+  var s = seed >>> 0;
+  return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+var nodes = [], doors = [], seed = 1;
+
+function grow(sd) {
+  seed = sd;
+  var r = rng(sd);
+  nodes.length = 0; doors.length = 0;
+  /* the things you can catch. thicker at the bottom, meaner further up */
+  for (var y = 0.9; y < TOP + 2; y += 0.30 + r() * 0.16) {
+    var n = y > TOP * 0.6 ? 2 : 3;
+    for (var i = 0; i < n; i++)
+      nodes.push({ x: LEFT + 0.05 + r() * (RIGHT - LEFT - 0.10),
+                   y: y + (r() - 0.5) * 0.2, s: r() * 900 });
+  }
+  nodes.sort(function (a, b) { return a.y - b.y; });
+  /* and the doors across it */
+  for (var d = 2.4; d < TOP - 1.2; d += 2.5 + r() * 1.1)
+    doors.push({ y: d, torn: 0, mend: 0, s: r() * 900 });
+}
+
+/* ---------------------------------------------------------------- the two
+
+   nobody has a role. whoever is hanging off something is the one holding, and
+   whoever is in the air is the one climbing, and that swaps by itself every
+   time somebody throws.                                                    */
+
+var G = 0.78;
+var HANG = 0.085;             /* how far under a node you come to rest       */
+var HAUL = 0.85;              /* how fast you pull yourself up to it         */
+var REST = 0.20, SNAP = 0.78, PULL = 5.0, DRAG = 0.55;
+var FUSE = 0.7;
+var CATCH = 0.055;
+var CLEAR = 0.16;             /* a throw catches nothing until it is this far off */
+var CAST_MIN = 0.55, CAST_MAX = 2.15;
+var STILL = 0.09;             /* slower than this and your eyes start to work */
+var SIGHT_LO = 0.13, SIGHT_HI = 0.62;
+
+var me = { x: 0.35, y: 0.5, vx: 0, vy: 0, hook: -1, len: HANG, still: 1, sight: SIGHT_LO };
+var you = { x: 0.65, y: 0.5, vx: 0, vy: 0, hook: -1, sx: 0.65, sy: 0.5 };
+var shot = null;              /* a cast in the air                           */
+
+var host = false, live = false;
+var run = { n: 0, phase: 'wait', why: '', dread: 0, over: 0, high: 0, best: 0 };
+var spider = { on: 0, x: 0.5, y: 0, vy: 0, hunt: 0, look: 0 };
+
+function begin(sd) {
+  run.n++; run.phase = 'climb'; run.why = ''; run.over = 0; run.dread = 0; run.high = 0;
+  grow(sd);
+  me.x = 0.35; me.y = 0.5; me.vx = me.vy = 0; me.hook = -1; me.len = HANG; me.still = 1;
+  you.x = 0.65; you.y = 0.5; you.vx = you.vy = 0; you.hook = -1; you.sx = 0.65; you.sy = 0.5;
+  shot = null;
+  spider.on = 0; spider.hunt = 0; spider.y = TOP + 3;
+}
+
+function lose(why) {
+  if (run.phase !== 'climb') return;
+  run.phase = 'lost'; run.why = why;
+  if (run.high > run.best) run.best = run.high;
+  sound.lost();
+}
+function win() {
+  if (run.phase !== 'climb') return;
+  run.phase = 'won';
+  if (run.high > run.best) run.best = run.high;
+  sound.won();
+}
+
+/* ------------------------------------------------------------- the casting */
+
+function cast(dx, dy, power) {
+  if (run.phase !== 'climb' || shot) return;
+  var d = Math.sqrt(dx*dx + dy*dy) || 1;
+  var sp = CAST_MIN + (CAST_MAX - CAST_MIN) * power;
+  /* thrown the opposite way to the pull, like anything worth throwing */
+  shot = { x: me.x, y: me.y, x0: me.x, y0: me.y, vx: -dx / d * sp, vy: -dy / d * sp, t: 0 };
+  sound.cast();
+}
+
+function flyShot(dt) {
+  if (!shot) return;
+  shot.t += dt;
+  shot.vy -= G * 0.55 * dt;
+  var nx = shot.x + shot.vx * dt, ny = shot.y + shot.vy * dt;
+  /* it does not catch anything until it is clear of you. throwing at something
+     a long way off used to snag whatever happened to be at your feet — which
+     looked exactly like the throw doing nothing at all, because it left you
+     hanging where you already were */
+  var gx = nx - shot.x0, gy = ny - shot.y0;
+  var clear = gx*gx + gy*gy > CLEAR*CLEAR;
+  for (var i = 0; clear && i < nodes.length; i++) {
+    if (i === me.hook) continue;           /* nor the one you are already on */
+    var n = nodes[i];
+    if (Math.abs(n.y - ny) > 0.4) continue;
+    var ax = n.x - nx, ay = n.y - ny;
+    if (ax*ax + ay*ay < CATCH*CATCH) {
+      me.hook = i;
+      me.len = Math.max(HANG, Math.sqrt((me.x-n.x)*(me.x-n.x) + (me.y-n.y)*(me.y-n.y)));
+      shot = null; sound.catch_();
+      return;
+    }
+  }
+  shot.x = nx; shot.y = ny;
+  if (shot.t > 1.6 || shot.x < LEFT - 0.05 || shot.x > RIGHT + 0.05 || shot.y < me.y - 1.2) {
+    shot = null; sound.miss();
+  }
+}
+
+/* -------------------------------------------------------------- the moving */
+
+function step(dt) {
+  var i;
+  flyShot(dt);
+
+  me.vy -= G * dt;
+
+  /* what the other end of the rope is doing to you */
+  var dx = you.sx - me.x, dy = you.sy - me.y;
+  var d = Math.sqrt(dx*dx + dy*dy) || 1e-5;
+  if (d > REST) {
+    var f = (d - REST) * PULL * dt;
+    me.vx += dx / d * f; me.vy += dy / d * f;
+  }
+
+  me.vx -= me.vx * DRAG * dt;
+  me.vy -= me.vy * DRAG * dt;
+  me.x += me.vx * dt; me.y += me.vy * dt;
+
+  /* hanging off something: you come up the line to it, and then you stop */
+  if (me.hook >= 0) {
+    var n = nodes[me.hook];
+    if (me.len > HANG) me.len = Math.max(HANG, me.len - HAUL * dt);
+    var ox = me.x - n.x, oy = me.y - n.y;
+    var od = Math.sqrt(ox*ox + oy*oy) || 1e-5;
+    if (od > me.len) {
+      me.x = n.x + ox / od * me.len;
+      me.y = n.y + oy / od * me.len;
+      var radial = (me.vx * ox + me.vy * oy) / od;
+      if (radial > 0) { me.vx -= ox / od * radial; me.vy -= oy / od * radial; }
+    }
+  }
+
+  if (me.x < LEFT) { me.x = LEFT; me.vx = Math.abs(me.vx) * 0.3; }
+  if (me.x > RIGHT) { me.x = RIGHT; me.vx = -Math.abs(me.vx) * 0.3; }
+  if (me.y < 0.2) { me.y = 0.2; me.vy = Math.max(0, me.vy); }
+
+  /* how still you are, and therefore how much of it you can see */
+  var sp = Math.sqrt(me.vx*me.vx + me.vy*me.vy);
+  var moving = sp > STILL || !!shot;
+  me.still = moving ? Math.max(0, me.still - dt * 3.4) : Math.min(1, me.still + dt * 0.85);
+  var want = SIGHT_LO + (SIGHT_HI - SIGHT_LO) * (me.still * me.still);
+  me.sight += (want - me.sight) * Math.min(1, dt * 2.4);
+
+  if (me.y > run.high) run.high = me.y;
+
+  /* the doors. through one gently and it lets you by; through one in a hurry
+     and it goes, and she hears it go */
+  for (i = 0; i < doors.length; i++) {
+    var dr = doors[i];
+    var was = dr.was || 0, now = me.y > dr.y ? 1 : -1;
+    dr.was = now;
+    if (was && was !== now && !dr.torn) {
+      if (Math.abs(me.vy) > 0.40) { dr.torn = 1; run.dread = Math.min(1, run.dread + 0.22); sound.tear(); }
+      else sound.part();
+    }
+    /* both of you still, at a torn one, and it can be put back */
+    if (dr.torn) {
+      var close = Math.abs(me.y - dr.y) < 0.16 && Math.abs(you.sy - dr.y) < 0.16;
+      var quiet = me.still > 0.55 && Math.abs(you.vx) + Math.abs(you.vy) < STILL;
+      if (close && quiet) {
+        dr.mend += dt;
+        if (dr.mend > 2.6) { dr.torn = 0; dr.mend = 0; run.dread = Math.max(0, run.dread - 0.22); sound.mend(); }
+      } else dr.mend = Math.max(0, dr.mend - dt * 0.7);
+    }
+  }
+
+  /* the rope only has so much in it */
+  if (d > SNAP) {
+    run.over += dt;
+    if (run.over > FUSE) lose('the rope came apart');
+  } else run.over = Math.max(0, run.over - dt * 2);
+
+  if (me.y > TOP) win();
+}
+
+/* --------------------------------------------------------------- and her
+
+   she crosses the shaft now and then on a line of her own, and the only right
+   answer to that is to stop moving. later on she does not cross, she comes
+   down, and the answer is the same one.                                    */
+
+var passIn = 9;
+function herStep(dt) {
+  if (run.phase !== 'climb') return;
+  var top = run.high > TOP - 4.5;
+
+  if (!top) {
+    passIn -= dt * (1 + run.dread);
+    if (passIn < 0 && !spider.on) {
+      spider.on = 1; spider.y = me.y + 0.35 + Math.random() * 0.5;
+      spider.x = Math.random() < 0.5 ? LEFT - 0.1 : RIGHT + 0.1;
+      spider.vy = (Math.random() - 0.5) * 0.1;
+      sound.pass(spider.x < 0.5 ? -0.8 : 0.8);
+      passIn = 14 + Math.random() * 12;
+    }
+    if (spider.on) {
+      spider.x += (spider.x < 0.5 ? 1 : -1) * 0.42 * dt;
+      spider.y += spider.vy * dt;
+      /* moving while she is in the room is noticed */
+      var sp = Math.sqrt(me.vx*me.vx + me.vy*me.vy);
+      if (sp > STILL * 2 && Math.abs(spider.y - me.y) < 0.7)
+        run.dread = Math.min(1, run.dread + dt * 0.22);
+      if (spider.x < LEFT - 0.2 || spider.x > RIGHT + 0.2) spider.on = 0;
+    }
+    return;
+  }
+
+  /* the top. she is on the rope now and she is looking for whichever of you
+     is making it move */
+  spider.on = 2;
+  if (spider.y > TOP + 2.4) spider.y = TOP + 2.4;
+  var mySp = Math.sqrt(me.vx*me.vx + me.vy*me.vy) + (shot ? 0.5 : 0);
+  var yrSp = Math.abs(you.vx) + Math.abs(you.vy);
+  var loud = mySp > yrSp ? 1 : -1;
+  var tx = loud > 0 ? me.x : you.sx, ty = loud > 0 ? me.y : you.sy;
+  var noise = Math.max(mySp, yrSp);
+  spider.hunt += (noise > STILL ? 1 : -0.6) * dt;
+  spider.hunt = Math.max(0, Math.min(1, spider.hunt));
+  var chase = (0.30 + 0.9 * run.dread) * spider.hunt;
+  spider.x += (tx - spider.x) * chase * dt;
+  spider.y += (ty - spider.y) * chase * dt * 1.4;
+  spider.look = loud;
+  if (Math.abs(spider.y - me.y) < 0.07 && Math.abs(spider.x - me.x) < 0.06 && mySp > STILL)
+    lose('she found you');
+}
+
+/* -------------------------------------------------------------- the frame */
+
+var last = 0, sent = 0, time = 0;
+function frame(ms) {
+  requestAnimationFrame(frame);
+  var now = ms * 0.001;
+  var dt = Math.min(now - last, 0.05) || 0.016;
+  last = now; time = now;
+
+  if (run.phase === 'climb') step(dt);
+  if (host) herStep(dt);
+
+  you.sx += (you.x - you.sx) * Math.min(1, dt * 13);
+  you.sy += (you.y - you.sy) * Math.min(1, dt * 13);
+
+  sent += dt;
+  if (live && sent > 0.033) {
+    sent = 0;
+    var p = { x: me.x, y: me.y, vx: me.vx, vy: me.vy, h: me.hook };
+    if (host) {
+      p.r = run.n; p.f = run.phase; p.w = run.why; p.d = run.dread; p.g = run.high;
+      p.s = spider.on ? [spider.x, spider.y, spider.on] : null;
+      p.t = tornBits();
+    }
+    wire.send(p);
+  }
+
+  hear();
+  draw();
+}
+
+function tornBits() {
+  var v = 0;
+  for (var i = 0; i < doors.length && i < 30; i++) if (doors[i].torn) v |= (1 << i);
+  return v;
+}
+
+function hear() {
+  var dx = you.sx - me.x, dy = you.sy - me.y;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  var side = Math.max(-1, Math.min(1, dx / 0.5));
+  var near = Math.max(0, 1 - d / 0.9);
+  var strain = Math.max(0, (d - REST) / (SNAP - REST));
+  if (d > SNAP) strain = 1 + Math.min(1, (d - SNAP) * 5);
+  sound.update(side, near, strain, Math.min(1, me.y / TOP));
+}
+
+/* ------------------------------------------------------------------ drawing
+
+   you get a circle of the shaft round you, and it is small while you are
+   moving. everything else is the dark.                                     */
+
+function sx(x) { return W * x; }
+function sy(y) { return H * 0.62 - (y - me.y) * H; }
+
+function fade(y, x) {
+  var dx = (x - me.x) * 0.6, dy = y - me.y;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  return Math.max(0, 1 - d / me.sight);
+}
+
+function draw() {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = '#04050a';
+  g.fillRect(0, 0, W, H);
+
+  var i, a;
+
+  /* the walls, when you are near enough one to touch it */
+  for (i = 0; i < 2; i++) {
+    var wx = i ? RIGHT : LEFT;
+    a = Math.max(0, 1 - Math.abs(wx - me.x) / (me.sight * 1.4));
+    if (a <= 0.01) continue;
+    var wg = g.createLinearGradient(sx(wx) - (i ? -30 : 30) * U, 0, sx(wx), 0);
+    wg.addColorStop(0, 'rgba(70,84,110,0)');
+    wg.addColorStop(1, 'rgba(70,84,110,' + (a * 0.30).toFixed(3) + ')');
+    g.fillStyle = wg;
+    g.fillRect(i ? sx(wx) : sx(wx) - 30 * U, 0, 30 * U, H);
+  }
+
+  /* the doors */
+  for (i = 0; i < doors.length; i++) {
+    var dr = doors[i];
+    a = fade(dr.y, me.x);
+    if (a <= 0.02) continue;
+    var yy = sy(dr.y);
+    g.strokeStyle = dr.torn
+      ? 'rgba(120,132,156,' + (a * 0.30).toFixed(3) + ')'
+      : 'rgba(196,214,246,' + (a * 0.55).toFixed(3) + ')';
+    g.lineWidth = (dr.torn ? 0.7 : 1.1) * U;
+    g.beginPath();
+    for (var q = 0; q <= 22; q++) {
+      var t = q / 22, x = sx(LEFT + (RIGHT - LEFT) * t);
+      var sag = Math.sin(t * Math.PI) * 7 * U * (1 + Math.sin(time * 0.6 + dr.s));
+      /* a torn one hangs in two halves and does not meet in the middle */
+      if (dr.torn && Math.abs(t - 0.5) < 0.16) { g.moveTo(x, yy + sag); continue; }
+      if (q === 0) g.moveTo(x, yy + sag); else g.lineTo(x, yy + sag);
+    }
+    g.stroke();
+    if (dr.torn && dr.mend > 0) {
+      g.strokeStyle = 'rgba(226,236,255,' + (a * 0.5 * (dr.mend / 2.6)).toFixed(3) + ')';
+      g.lineWidth = 1.4 * U;
+      g.beginPath();
+      g.moveTo(sx(0.5) - 26 * U * (dr.mend / 2.6), yy);
+      g.lineTo(sx(0.5) + 26 * U * (dr.mend / 2.6), yy);
+      g.stroke();
+    }
+  }
+
+  /* the nodes */
+  for (i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    if (Math.abs(n.y - me.y) > 1.4) continue;
+    a = fade(n.y, n.x);
+    if (i === me.hook) a = Math.max(a, 0.85);
+    if (a <= 0.02) continue;
+    var nx = sx(n.x), ny = sy(n.y);
+    var ng = g.createRadialGradient(nx, ny, 0, nx, ny, 13 * U);
+    ng.addColorStop(0, 'rgba(206,222,250,' + (a * 0.75).toFixed(3) + ')');
+    ng.addColorStop(0.4, 'rgba(150,172,210,' + (a * 0.22).toFixed(3) + ')');
+    ng.addColorStop(1, 'rgba(120,140,180,0)');
+    g.fillStyle = ng;
+    g.beginPath(); g.arc(nx, ny, 13 * U, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(226,238,255,' + (a * 0.9).toFixed(3) + ')';
+    g.beginPath(); g.arc(nx, ny, 2 * U, 0, Math.PI * 2); g.fill();
+  }
+
+  var mx = sx(me.x), my = sy(me.y);
+
+  /* your own line to whatever you are hanging from */
+  if (me.hook >= 0) {
+    var hn = nodes[me.hook];
+    g.strokeStyle = 'rgba(190,208,240,0.5)';
+    g.lineWidth = 1.1 * U;
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(sx(hn.x), sy(hn.y)); g.stroke();
+  }
+
+  /* the cast, in the air */
+  if (shot) {
+    g.strokeStyle = 'rgba(210,226,255,0.55)';
+    g.lineWidth = 1 * U;
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(sx(shot.x), sy(shot.y)); g.stroke();
+    g.fillStyle = 'rgba(236,244,255,0.9)';
+    g.beginPath(); g.arc(sx(shot.x), sy(shot.y), 2.4 * U, 0, Math.PI * 2); g.fill();
+  }
+
+  /* the rope to them: the near end of it only, so you get which way they are
+     and how hard they are pulling and nothing else */
+  var rdx = you.sx - me.x, rdy = you.sy - me.y;
+  var rd = Math.sqrt(rdx*rdx + rdy*rdy) || 1e-5;
+  var strain = Math.max(0, Math.min(1, (rd - REST) / (SNAP - REST)));
+  if (run.phase === 'climb') {
+    var vis = Math.min(1, (0.13 + 0.22 * strain) / rd);
+    var ex = mx + (sx(you.sx) - mx) * vis, ey = my + (sy(you.sy) - my) * vis;
+    var rg = g.createLinearGradient(mx, my, ex, ey);
+    var ra = 0.3 + 0.55 * strain;
+    rg.addColorStop(0, 'rgba(150,170,200,' + ra.toFixed(3) + ')');
+    rg.addColorStop(1, 'rgba(150,170,200,0)');
+    g.strokeStyle = rg;
+    g.lineWidth = (1.6 - 0.7 * strain) * U;
+    var sag = (1 - strain) * 12 * U;
+    var jit = strain > 0.8 ? (Math.random() - 0.5) * (strain - 0.8) * 40 * U : 0;
+    g.beginPath(); g.moveTo(mx, my);
+    g.quadraticCurveTo((mx + ex) * 0.5, (my + ey) * 0.5 + sag + jit, ex, ey);
+    g.stroke();
+  }
+
+  if (rd > SNAP && run.phase === 'climb') {
+    g.fillStyle = 'rgba(200,215,240,' + (0.03 + Math.random() * 0.05).toFixed(3) + ')';
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* her */
+  if (spider.on) {
+    var spx = sx(spider.x), spy = sy(spider.y);
+    var sa = spider.on === 2 ? 0.8 : Math.max(0.25, fade(spider.y, spider.x));
+    g.strokeStyle = 'rgba(180,196,226,' + (sa * 0.25).toFixed(3) + ')';
+    g.lineWidth = 0.8 * U;
+    g.beginPath(); g.moveTo(spx, spy - 400 * U); g.lineTo(spx, spy); g.stroke();
+    drawHer(spx, spy, sa);
+  }
+
+  /* you */
+  var glow = g.createRadialGradient(mx, my, 0, mx, my, 30 * U);
+  glow.addColorStop(0, 'rgba(228,238,252,0.95)');
+  glow.addColorStop(0.22, 'rgba(180,200,232,0.30)');
+  glow.addColorStop(1, 'rgba(170,192,228,0)');
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(mx, my, 30 * U, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#f4f8ff';
+  g.beginPath(); g.arc(mx, my, 2.4 * U, 0, Math.PI * 2); g.fill();
+
+  drawSling();
+  drawTalk();
+  drawWords();
+}
+
+var LEG = [0.55, 1.15, 1.95, 2.62];
+function drawHer(cx, cy, a) {
+  g.strokeStyle = 'rgba(226,236,255,' + (a * 0.8).toFixed(3) + ')';
+  g.lineWidth = 0.9 * U;
+  for (var s = -1; s <= 1; s += 2)
+    for (var k = 0; k < 4; k++) {
+      var ph = time * 2.2 + k * 0.8 + (s > 0 ? 1.6 : 0);
+      var base = Math.PI * 0.5 + s * (LEG[k] + Math.sin(ph) * 0.2);
+      var kx = cx + Math.cos(base) * 7 * U, ky = cy + Math.sin(base) * 7 * U;
+      var knee = base + s * (0.7 + Math.cos(ph) * 0.25);
+      g.beginPath(); g.moveTo(cx, cy); g.lineTo(kx, ky);
+      g.lineTo(kx + Math.cos(knee) * 8 * U, ky + Math.sin(knee) * 8 * U); g.stroke();
+    }
+  g.fillStyle = 'rgba(232,242,255,' + a.toFixed(3) + ')';
+  g.beginPath(); g.ellipse(cx, cy + 3 * U, 5 * U, 4.2 * U, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(cx, cy - 2.6 * U, 3 * U, 2.6 * U, 0, 0, Math.PI * 2); g.fill();
+}
+
+function drawWords() {
+  g.font = (11 * U) + 'px "Courier New",courier,monospace';
+  g.textAlign = 'center';
+  g.fillStyle = 'rgba(140,152,172,0.7)';
+  g.fillText(Math.floor(run.high * 4) + 'm', W * 0.5, 26 * U);
+  if (run.best > 0) {
+    g.fillStyle = 'rgba(110,122,142,0.45)';
+    g.fillText('best ' + Math.floor(run.best * 4) + 'm', W * 0.5, 44 * U);
+  }
+  /* how much of her attention you have bought */
+  if (run.dread > 0.02) {
+    var n = Math.round(run.dread * 10);
+    g.fillStyle = 'rgba(180,150,150,' + (0.25 + run.dread * 0.5).toFixed(2) + ')';
+    g.fillText(new Array(n + 1).join('. '), W * 0.5, 62 * U);
+  }
+  g.textAlign = 'center';
+  if (run.phase === 'lost' || run.phase === 'won') {
+    g.fillStyle = 'rgba(180,196,222,0.9)';
+    g.fillText(run.phase === 'won' ? 'you are out' : run.why, W * 0.5, H * 0.5 + 70 * U);
+    g.fillStyle = 'rgba(110,122,142,0.6)';
+    g.fillText(host ? 'press to go again' : 'they will start it again', W * 0.5, H * 0.5 + 90 * U);
+  }
+  if (run.phase === 'wait') {
+    g.fillStyle = 'rgba(140,152,172,0.7)';
+    g.fillText(host ? 'press to begin' : 'waiting for them', W * 0.5, H * 0.5 + 70 * U);
+  }
+}
+
+/* ----------------------------------------------------------- the controls */
+
+var sling = { on: false, id: null, ox: 0, oy: 0, x: 0, y: 0 };
+var talk = { id: null, held: false, latch: false, down: 0, tapAt: 0 };
+var SLING_R = 78;
+
+function talkPos() { return [W - 66 * U, H - 74 * U]; }
+function talking() { return talk.held || talk.latch; }
+
+function drawSling() {
+  if (!sling.on) {
+    if (run.phase === 'climb' && !shot) {
+      g.strokeStyle = 'rgba(120,140,175,0.14)';
+      g.lineWidth = 1 * U;
+      g.beginPath(); g.arc(W * 0.5, H - 74 * U, 26 * U, 0, Math.PI * 2); g.stroke();
+      g.font = (9 * U) + 'px "Courier New",courier,monospace';
+      g.fillStyle = 'rgba(120,140,175,0.30)';
+      g.textAlign = 'center';
+      g.fillText('PULL', W * 0.5, H - 71 * U);
+    }
+    return;
+  }
+  var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
+  var d = Math.sqrt(dx*dx + dy*dy);
+  var pw = Math.min(1, d / (SLING_R * U));
+  /* the line you are drawing back is the line you are about to throw */
+  g.strokeStyle = 'rgba(150,172,210,0.35)';
+  g.lineWidth = 1 * U;
+  g.beginPath(); g.arc(sling.ox, sling.oy, SLING_R * U, 0, Math.PI * 2); g.stroke();
+  g.strokeStyle = 'rgba(214,230,255,' + (0.25 + pw * 0.55).toFixed(3) + ')';
+  g.lineWidth = (1 + pw * 2) * U;
+  g.beginPath(); g.moveTo(sling.ox, sling.oy); g.lineTo(sling.x, sling.y); g.stroke();
+  /* and where it is going */
+  var mx = sx(me.x), my = sy(me.y);
+  var L = (0.10 + pw * 0.55) * H;
+  var ux = -dx / (d || 1), uy = -dy / (d || 1);
+  var ag = g.createLinearGradient(mx, my, mx + ux * L, my + uy * L);
+  ag.addColorStop(0, 'rgba(226,238,255,' + (0.30 + pw * 0.35).toFixed(3) + ')');
+  ag.addColorStop(1, 'rgba(226,238,255,0)');
+  g.strokeStyle = ag; g.lineWidth = 1.2 * U;
+  g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + ux * L, my + uy * L); g.stroke();
+}
+
+function drawTalk() {
+  var p = talkPos(), r = 26 * U * (1 - talk.down * 0.07);
+  var on = talking();
+  g.strokeStyle = on ? 'rgba(226,238,255,0.55)' : 'rgba(120,140,175,0.22)';
+  g.lineWidth = 1.3 * U;
+  g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.stroke();
+  if (talk.latch) {
+    g.fillStyle = 'rgba(226,238,255,0.10)';
+    g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.fill();
+  }
+  g.font = (9 * U) + 'px "Courier New",courier,monospace';
+  g.textAlign = 'center';
+  g.fillStyle = on ? 'rgba(226,238,255,0.75)' : 'rgba(120,140,175,0.40)';
+  g.fillText(talk.latch ? 'OPEN' : (talk.held ? 'ON' : 'MUTE'), p[0], p[1] + 3 * U);
+}
+
+function setMic() {
+  var s = wire.mic();
+  if (!s) return;
+  var t = s.getAudioTracks()[0];
+  if (t) t.enabled = talking();
+}
+
+/* ------------------------------------------------------------------ input */
+
+function pt(e, out) { out[0] = e.clientX * DPR; out[1] = e.clientY * DPR; }
+var _p = [0, 0];
+
+canvas.addEventListener('pointerdown', function (e) {
+  sound.start(); sound.resume();
+  pt(e, _p);
+  var tp = talkPos();
+  var dx = _p[0] - tp[0], dy = _p[1] - tp[1];
+  if (dx*dx + dy*dy < (40 * U) * (40 * U)) {
+    talk.id = e.pointerId; talk.down = 1; talk.held = true; talk.tapAt = time;
+    setMic();
+    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+    return;
+  }
+  if (run.phase !== 'climb') { go(); return; }
+  if (shot) return;
+  sling.on = true; sling.id = e.pointerId;
+  sling.ox = _p[0]; sling.oy = _p[1]; sling.x = _p[0]; sling.y = _p[1];
+  if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+});
+
+canvas.addEventListener('pointermove', function (e) {
+  if (e.pointerId !== sling.id || !sling.on) return;
+  pt(e, _p);
+  sling.x = _p[0]; sling.y = _p[1];
+});
+
+function release(e) {
+  if (e.pointerId === talk.id) {
+    talk.id = null; talk.down = 0; talk.held = false;
+    /* a tap latches it open, and the next tap shuts it again */
+    if (time - talk.tapAt < 0.28) talk.latch = !talk.latch;
+    setMic();
+  }
+  if (e.pointerId === sling.id && sling.on) {
+    var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    sling.on = false; sling.id = null;
+    if (d > 14 * U) cast(dx, dy, Math.min(1, d / (SLING_R * U)));
+  }
+}
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('lostpointercapture', release);
+window.addEventListener('pointerup', release);
+window.addEventListener('blur', function () {
+  sling.on = false; sling.id = null; talk.id = null; talk.held = false; setMic();
+});
+
+document.addEventListener('keydown', function (e) {
+  sound.start(); sound.resume();
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); go(); }
+  if (e.key.toLowerCase() === 'm') { talk.latch = !talk.latch; setMic(); }
+});
+
+function go() {
+  if (!live || run.phase === 'climb') return;
+  if (host) { var sd = (Math.random() * 1e9) | 0; begin(sd); wire.sure({ go: sd }); }
+  else wire.sure({ go: 1 });
+}
+
+function resize() {
+  W = Math.floor(window.innerWidth * DPR);
+  H = Math.floor(window.innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  U = DPR;
+}
+window.addEventListener('resize', resize);
+
+/* --------------------------------------------------------- what comes in */
+
+wire.on(function (m) {
+  if (m.go !== undefined) {
+    if (host) { var sd = (Math.random() * 1e9) | 0; begin(sd); wire.sure({ go: sd }); }
+    else { begin(m.go); }
+    return;
+  }
+  if (m.mic) { if (host) wire.offerVoice(); return; }
+  if (typeof m.x === 'number') {
+    you.x = m.x; you.y = m.y; you.vx = m.vx || 0; you.vy = m.vy || 0; you.hook = m.h;
+  }
+  if (!host && m.f) {
+    if (m.f === 'lost' && run.phase !== 'lost') sound.lost();
+    if (m.f === 'won' && run.phase !== 'won') sound.won();
+    run.phase = m.f; run.why = m.w || ''; run.dread = m.d || 0;
+    if (m.g > run.best) run.best = m.g;
+    if (m.s) { spider.on = m.s[2]; spider.x = m.s[0]; spider.y = m.s[1]; }
+    else spider.on = 0;
+    for (var i = 0; i < doors.length && i < 30; i++) {
+      var t = (m.t & (1 << i)) ? 1 : 0;
+      if (t !== doors[i].torn) { doors[i].torn = t; if (t) sound.tear(); else sound.mend(); }
+    }
+  }
+}, function () {
+  live = true;
+  host = wire.role() === 'host';
+  panel.className = 'gone';
+  sound.start();
+  run.phase = 'wait';
+  askMic();
+}, function (stream) { sound.voice(stream); });
+
+async function askMic() {
+  var stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (e) { stream = null; }
+  wire.setMic(stream);
+  setMic();
+  if (wire.role() === 'host') setTimeout(function () { wire.offerVoice(); }, 600);
+  else if (stream) wire.sure({ mic: 1 });
+}
+
+/* ------------------------------------------------------------- the panel */
+
+document.getElementById('b-host').onclick = async function () {
+  show('s-host'); tell('making a thread...');
+  try { document.getElementById('t-offer').value = await wire.host(); tell(''); }
+  catch (e) { tell(String(e.message || e)); }
+};
+document.getElementById('b-join').onclick = function () { show('s-join'); tell(''); };
+document.getElementById('b-take').onclick = async function () {
+  tell('taking it...');
+  try {
+    document.getElementById('t-reply').value = await wire.take(document.getElementById('t-in').value);
+    show('s-reply'); tell('');
+  } catch (e) { tell(String(e.message || e)); }
+};
+document.getElementById('b-tie').onclick = async function () {
+  tell('tying...');
+  try { await wire.tie(document.getElementById('t-answer').value); tell('waiting for it to take...'); }
+  catch (e) { tell(String(e.message || e)); }
+};
+function copier(id) {
+  return function () {
+    var t = document.getElementById(id);
+    t.select(); t.setSelectionRange(0, 99999);
+    if (navigator.clipboard)
+      navigator.clipboard.writeText(t.value).then(function () { tell('copied.'); },
+                                                  function () { tell('copy it by hand.'); });
+    else { try { document.execCommand('copy'); tell('copied.'); } catch (e) { tell('copy it by hand.'); } }
+  };
+}
+document.getElementById('b-copy1').onclick = copier('t-offer');
+document.getElementById('b-copy2').onclick = copier('t-reply');
+
+resize();
+grow(1);
+requestAnimationFrame(frame);
+
+/* for driving two of these against each other */
+window.__ascend = { wire: wire, run: run, me: me, you: you, nodes: nodes, doors: doors,
+                    spider: spider, sound: sound, cast: cast,
+                    live: function () { return live; }, host: function () { return host; },
+                    talking: talking, shot: function () { return shot; } };
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
