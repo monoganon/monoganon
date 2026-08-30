@@ -50,6 +50,10 @@
          and you keep swapping until you are at the top or she has you.</p>
       <p class="note">Nothing runs in between. To be tied together you must pass a piece
          of text back and forth once, by whatever way you already talk.</p>
+      <p class="warn">You cannot both be on the same web. Two machines behind one router
+         share an address and generally cannot find each other through it, so being in
+         the same room is the one arrangement that will not work. If you are, put one
+         of you on mobile data.</p>
       <div class="row">
         <button id="b-host">Open a thread</button>
         <button id="b-join">Take a thread</button>
@@ -215,16 +219,15 @@ var wire = (function () {
   /* the two of them never found a way through to each other. that is nearly
      always the same story and it is worth telling it rather than shrugging */
   function slack() {
-    var why = 'the rope went slack.';
+    var why = 'the rope went slack. ';
     if (!found.public && !found.relay)
-      why += ' nothing outside this machine answered, so neither of you could' +
-             ' work out your own address.';
-    else if (found.mdns && found.host === found.mdns && !found.relay)
-      why += ' you are both behind the same router. it will only work if the two' +
-             ' machines can see each other on the wifi directly — some routers and' +
-             ' most guest networks do not allow that.';
+      why += 'nothing outside this machine answered, so neither of you could work' +
+             ' out your own address.';
     else
-      why += ' no way through was found between you.';
+      why += 'no way through was found between you. if you are both on the same' +
+             ' web — one router, one wifi, the same room — that is why, and it is' +
+             ' the one arrangement that will not work. put one of you on mobile' +
+             ' data and open a new thread.';
     tell(why + ' ' + report());
     fail = why;
   }
