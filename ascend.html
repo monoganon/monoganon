@@ -407,12 +407,29 @@ function grow(sd) {
   seed = sd;
   var r = rng(sd);
   nodes.length = 0; doors.length = 0;
-  /* the things you can catch. thicker at the bottom, meaner further up */
-  for (var y = 0.9; y < TOP + 2; y += 0.30 + r() * 0.16) {
-    var n = y > TOP * 0.6 ? 2 : 3;
-    for (var i = 0; i < n; i++)
-      nodes.push({ x: LEFT + 0.05 + r() * (RIGHT - LEFT - 0.10),
-                   y: y + (r() - 0.5) * 0.2, s: r() * 900 });
+  /* a way up rather than a field of things to grab at. each one is within a
+     throw of the one below it, so there is always a route; now and then there
+     is a second one off to the side, so there is something to decide. with a
+     field of them you could throw at the ceiling and keep going, and there was
+     nothing for the one who could see to tell the one who could not. */
+  /* the first one is low enough to be thrown at from the floor: with a rope
+     that never breaks, being out of reach of everything is the only way left
+     to be truly stuck, and there is no reason to allow it */
+  var x = 0.5, y = 0.72;
+  while (y < TOP + 2.5) {
+    nodes.push({ x: x, y: y, s: r() * 900 });
+    if (r() < 0.30) {
+      var side = r() < 0.5 ? -1 : 1;
+      var fx = x + side * (0.16 + r() * 0.18);
+      if (fx > LEFT + 0.05 && fx < RIGHT - 0.05)
+        nodes.push({ x: fx, y: y + (r() - 0.5) * 0.22, s: r() * 900 });
+    }
+    var step = 0.36 + r() * 0.22;
+    var lean = (r() - 0.5) * 1.7;
+    var nx = x + Math.sin(lean) * step;
+    if (nx < LEFT + 0.07 || nx > RIGHT - 0.07) nx = x - Math.sin(lean) * step;
+    x = Math.max(LEFT + 0.07, Math.min(RIGHT - 0.07, nx));
+    y += Math.max(0.24, Math.cos(lean) * step);
   }
   nodes.sort(function (a, b) { return a.y - b.y; });
   /* and the doors across it */
@@ -429,13 +446,16 @@ function grow(sd) {
 var G = 0.78;
 var HANG = 0.085;             /* how far under a node you come to rest       */
 var HAUL = 0.85;              /* how fast you pull yourself up to it         */
-var REST = 0.20, SNAP = 0.78, PULL = 5.0, DRAG = 0.55;
-var FUSE = 0.7;
+var REST = 0.20;              /* it hangs slack up to here                   */
+var ROPE = 0.92;              /* and it does not go past here. ever.         */
+var PULL = 4.0, DRAG = 0.55;
 var CATCH = 0.055;
 var CLEAR = 0.16;             /* a throw catches nothing until it is this far off */
-var CAST_MIN = 0.55, CAST_MAX = 2.15;
+var CAST_MIN = 0.42, CAST_MAX = 1.18;   /* a full pull reaches about one hop */
 var STILL = 0.09;             /* slower than this and your eyes start to work */
-var SIGHT_LO = 0.13, SIGHT_HI = 0.62;
+/* still, you can see the next one or two and can say where they are. moving,
+   you can see about as far as your own arm, and have to be told. */
+var SIGHT_LO = 0.26, SIGHT_HI = 1.05;
 
 /* the two of them are the same kind of thing, and the same code moves either.
    over a wire only your own one is moved here and the other arrives already
@@ -518,6 +538,21 @@ function flyShot(a, dt) {
 
 /* -------------------------------------------------------------- the moving */
 
+/* pull a back inside whatever is holding it */
+function tie(a, px, py, len) {
+  var ox = a.x - px, oy = a.y - py;
+  var od = Math.sqrt(ox*ox + oy*oy) || 1e-5;
+  if (od <= len) return;
+  a.x = px + ox / od * len;
+  a.y = py + oy / od * len;
+  var radial = (a.vx * ox + a.vy * oy) / od;
+  if (radial > 0) { a.vx -= ox / od * radial; a.vy -= oy / od * radial; }
+}
+function hold(a, o) {
+  if (a.hook >= 0) tie(a, nodes[a.hook].x, nodes[a.hook].y, a.len);
+  tie(a, o.sx, o.sy, ROPE);
+}
+
 function step(a, o, dt) {
   var i;
   flyShot(a, dt);
@@ -537,18 +572,11 @@ function step(a, o, dt) {
   a.x += a.vx * dt; a.y += a.vy * dt;
 
   /* hanging off something: you come up the line to it, and then you stop */
-  if (a.hook >= 0) {
-    var n = nodes[a.hook];
-    if (a.len > HANG) a.len = Math.max(HANG, a.len - HAUL * dt);
-    var ox = a.x - n.x, oy = a.y - n.y;
-    var od = Math.sqrt(ox*ox + oy*oy) || 1e-5;
-    if (od > a.len) {
-      a.x = n.x + ox / od * a.len;
-      a.y = n.y + oy / od * a.len;
-      var radial = (a.vx * ox + a.vy * oy) / od;
-      if (radial > 0) { a.vx -= ox / od * radial; a.vy -= oy / od * radial; }
-    }
-  }
+  if (a.hook >= 0 && a.len > HANG) a.len = Math.max(HANG, a.len - HAUL * dt);
+  /* two things hold you: the line to whatever you are hanging from, and the
+     rope to them. neither stretches, so they are settled against each other a
+     couple of times over rather than one of them winning outright */
+  hold(a, o); hold(a, o);
 
   if (a.x < LEFT) { a.x = LEFT; a.vx = Math.abs(a.vx) * 0.3; }
   if (a.x > RIGHT) { a.x = RIGHT; a.vx = -Math.abs(a.vx) * 0.3; }
@@ -585,12 +613,6 @@ function step(a, o, dt) {
     }
   }
 
-  /* the rope only has so much in it */
-  if (d > SNAP) {
-    run.over += dt;
-    if (run.over > FUSE) lose('the rope came apart');
-  } else run.over = Math.max(0, run.over - dt * 2);
-
   if (a.y > TOP) win();
 }
 
@@ -607,7 +629,7 @@ function brain(a, o, dt) {
   /* it holds while you climb, unless it has been left so far below that the
      rope is about to take it off the wall, at which point holding is no
      longer the useful thing to be doing */
-  var urgent = a.y < o.y - (SNAP - REST) * 0.55;
+  var urgent = a.y < o.y - (ROPE - REST) * 0.62;
   if (!urgent && (o.still < 0.55 || o.shot)) return;
   if (a.hook >= 0 && a.len > HANG + 0.01) return;    /* still coming up */
   if (a.think > 0) return;
@@ -727,8 +749,7 @@ function hear() {
   var d = Math.sqrt(dx*dx + dy*dy);
   var side = Math.max(-1, Math.min(1, dx / 0.5));
   var near = Math.max(0, 1 - d / 0.9);
-  var strain = Math.max(0, (d - REST) / (SNAP - REST));
-  if (d > SNAP) strain = 1 + Math.min(1, (d - SNAP) * 5);
+  var strain = Math.max(0, Math.min(1, (d - REST) / (ROPE - REST)));
   sound.update(side, near, strain, Math.min(1, me.y / TOP));
 }
 
@@ -748,7 +769,7 @@ function fade(y, x) {
 
 function draw() {
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = '#04050a';
+  g.fillStyle = '#05070d';
   g.fillRect(0, 0, W, H);
 
   var i, a;
@@ -758,9 +779,9 @@ function draw() {
     var wx = i ? RIGHT : LEFT;
     a = Math.max(0, 1 - Math.abs(wx - me.x) / (me.sight * 1.4));
     if (a <= 0.01) continue;
-    var wg = g.createLinearGradient(sx(wx) - (i ? -30 : 30) * U, 0, sx(wx), 0);
-    wg.addColorStop(0, 'rgba(70,84,110,0)');
-    wg.addColorStop(1, 'rgba(70,84,110,' + (a * 0.30).toFixed(3) + ')');
+    var wg = g.createLinearGradient(sx(wx) - (i ? -34 : 34) * U, 0, sx(wx), 0);
+    wg.addColorStop(0, 'rgba(84,100,132,0)');
+    wg.addColorStop(1, 'rgba(84,100,132,' + (a * 0.42).toFixed(3) + ')');
     g.fillStyle = wg;
     g.fillRect(i ? sx(wx) : sx(wx) - 30 * U, 0, 30 * U, H);
   }
@@ -772,8 +793,8 @@ function draw() {
     if (a <= 0.02) continue;
     var yy = sy(dr.y);
     g.strokeStyle = dr.torn
-      ? 'rgba(120,132,156,' + (a * 0.30).toFixed(3) + ')'
-      : 'rgba(196,214,246,' + (a * 0.55).toFixed(3) + ')';
+      ? 'rgba(134,146,172,' + (a * 0.38).toFixed(3) + ')'
+      : 'rgba(206,224,255,' + (a * 0.70).toFixed(3) + ')';
     g.lineWidth = (dr.torn ? 0.7 : 1.1) * U;
     g.beginPath();
     for (var q = 0; q <= 22; q++) {
@@ -802,14 +823,14 @@ function draw() {
     if (i === me.hook) a = Math.max(a, 0.85);
     if (a <= 0.02) continue;
     var nx = sx(n.x), ny = sy(n.y);
-    var ng = g.createRadialGradient(nx, ny, 0, nx, ny, 13 * U);
-    ng.addColorStop(0, 'rgba(206,222,250,' + (a * 0.75).toFixed(3) + ')');
-    ng.addColorStop(0.4, 'rgba(150,172,210,' + (a * 0.22).toFixed(3) + ')');
+    var ng = g.createRadialGradient(nx, ny, 0, nx, ny, 20 * U);
+    ng.addColorStop(0, 'rgba(214,230,255,' + (a * 0.95).toFixed(3) + ')');
+    ng.addColorStop(0.3, 'rgba(160,184,224,' + (a * 0.34).toFixed(3) + ')');
     ng.addColorStop(1, 'rgba(120,140,180,0)');
     g.fillStyle = ng;
-    g.beginPath(); g.arc(nx, ny, 13 * U, 0, Math.PI * 2); g.fill();
-    g.fillStyle = 'rgba(226,238,255,' + (a * 0.9).toFixed(3) + ')';
-    g.beginPath(); g.arc(nx, ny, 2 * U, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(nx, ny, 20 * U, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(236,246,255,' + Math.min(1, a * 1.1).toFixed(3) + ')';
+    g.beginPath(); g.arc(nx, ny, 2.6 * U, 0, Math.PI * 2); g.fill();
   }
 
   var mx = sx(me.x), my = sy(me.y);
@@ -835,9 +856,11 @@ function draw() {
      and how hard they are pulling and nothing else */
   var rdx = you.sx - me.x, rdy = you.sy - me.y;
   var rd = Math.sqrt(rdx*rdx + rdy*rdy) || 1e-5;
-  var strain = Math.max(0, Math.min(1, (rd - REST) / (SNAP - REST)));
+  var strain = Math.max(0, Math.min(1, (rd - REST) / (ROPE - REST)));
   if (run.phase === 'climb') {
-    var vis = Math.min(1, (0.13 + 0.22 * strain) / rd);
+    /* the tighter it is the more of it you are shown, and at full stretch the
+       whole of it, because at full stretch it is the only thing in the world */
+    var vis = Math.min(1, (0.13 + 0.30 * strain + (strain > 0.97 ? 0.8 : 0)) / rd);
     var ex = mx + (sx(you.sx) - mx) * vis, ey = my + (sy(you.sy) - my) * vis;
     var rg = g.createLinearGradient(mx, my, ex, ey);
     var ra = 0.3 + 0.55 * strain;
@@ -850,11 +873,6 @@ function draw() {
     g.beginPath(); g.moveTo(mx, my);
     g.quadraticCurveTo((mx + ex) * 0.5, (my + ey) * 0.5 + sag + jit, ex, ey);
     g.stroke();
-  }
-
-  if (rd > SNAP && run.phase === 'climb') {
-    g.fillStyle = 'rgba(200,215,240,' + (0.03 + Math.random() * 0.05).toFixed(3) + ')';
-    g.fillRect(0, 0, W, H);
   }
 
   /* her */
@@ -898,8 +916,7 @@ function draw() {
       'you  y ' + me.y.toFixed(2) + '  hook ' + me.hook + '  still ' + me.still.toFixed(2) +
         '  sight ' + me.sight.toFixed(2),
       'them y ' + you.y.toFixed(2) + '  hook ' + you.hook + '  still ' + you.still.toFixed(2),
-      'rope ' + Math.hypot(you.sx - me.x, you.sy - me.y).toFixed(2) +
-        ' / snap ' + SNAP + '  over ' + run.over.toFixed(2),
+      'rope ' + Math.hypot(you.sx - me.x, you.sy - me.y).toFixed(2) + ' / ' + ROPE,
       'dread ' + run.dread.toFixed(2) + '  torn ' +
         doors.filter(function (d) { return d.torn; }).length + '/' + doors.length +
         '  her ' + spider.on + ' y ' + spider.y.toFixed(1),
@@ -1082,7 +1099,10 @@ function release(e) {
     var dx = sling.x - sling.ox, dy = sling.y - sling.oy;
     var d = Math.sqrt(dx*dx + dy*dy);
     sling.on = false; sling.id = null;
-    if (d > 14 * U) cast(me, dx, dy, Math.min(1, d / (SLING_R * U)));
+    /* the pull is measured down the page and the world is measured up it, so
+       one has to be turned into the other. without this the aim showed you one
+       way and the throw went the other, on the up-and-down only. */
+    if (d > 14 * U) cast(me, dx, -dy, Math.min(1, d / (SLING_R * U)));
   }
 }
 canvas.addEventListener('pointerup', release);
