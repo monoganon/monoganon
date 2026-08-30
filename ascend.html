@@ -184,8 +184,10 @@ var wire = (function () {
     var tag = s.slice(0, 2), body, sum = '';
     if (tag === 'B0' || tag === 'B1') { sum = s.slice(2, 9); body = s.slice(9); }
     else if (tag === 'A0' || tag === 'A1') body = s.slice(2);   /* the older kind */
-    else throw new Error('that does not look like a thread. it should be a' +
-                         ' single long run of letters, all of it.');
+    else throw new Error('that does not look like a thread. either it is not' +
+                         ' one, or this page is an older copy than the one that' +
+                         ' made it — reload it, properly, and have them send it' +
+                         ' again. it should be a single long run of letters.');
     if (sum && sum !== mark(body)) throw new Error(DAMAGED);
     var bytes, buf;
     try { bytes = b64ToBytes(body); } catch (e) { throw new Error(DAMAGED); }
@@ -252,15 +254,28 @@ var wire = (function () {
       }
     };
     pc.oniceconnectionstatechange = function () { ice = pc.iceConnectionState; };
+    /* a phone drops to 'disconnected' all the time — walking between rooms,
+       the radio handing over, and every time the voice is added or changed.
+       it nearly always comes back within a second or two. it used to be
+       treated as the end and it wrote the whole explanation across the middle
+       of the game, where it then stayed. now it is given ten seconds to come
+       back, and coming back clears it. */
     pc.onconnectionstatechange = function () {
       conn = pc.connectionState;
-      if (conn === 'failed' || conn === 'disconnected') slack();
+      if (conn === 'failed') { if (limp) clearTimeout(limp); limp = null; slack(); }
+      else if (conn === 'disconnected') {
+        if (!limp) limp = setTimeout(function () { limp = null; slack(); }, 10000);
+      } else if (conn === 'connected') {
+        if (limp) clearTimeout(limp);
+        limp = null; fail = '';
+      }
     };
   }
 
   /* the two of them never found a way through to each other. that is nearly
      always the same story and it is worth telling it rather than shrugging */
   function slack() {
+    if (fail) return;                 /* it has already been said once */
     var why = 'the rope went slack. ';
     if (!found.public && !found.relay)
       why += 'nothing outside this machine answered, so neither of you could work' +
@@ -282,7 +297,7 @@ var wire = (function () {
            found.relay + ' relayed · ' + (ice || '-') + '/' + (conn || '-') + ']';
   }
 
-  var fail = '';
+  var fail = '', limp = null;
 
   /* two taps on a button used to start two conversations at once, and the
      second one would arrive to find the first already finished — 'called in
