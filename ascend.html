@@ -421,7 +421,8 @@ var wire = (function () {
 var sound = (function () {
   var ctx = null, started = false, hasVoice = false;
   var airGain, airLp, strainGain, strainLp, ropeSrc;
-  var voicePan = null, voiceGain = null, voiceEl = null;
+  var bus = null, duck = null, voiceEl = null;
+  var lastStrain = 0, tug = 0;
 
   function noise(sec) {
     var len = ctx.sampleRate * sec, b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
@@ -436,14 +437,25 @@ var sound = (function () {
     if (!AC) return;
     ctx = new AC();
 
+    /* everything the game makes goes through one place, and that place has a
+       ceiling on it. three things could go off at once — a spike, a door and
+       a throw — and each was a separate noise straight at the output, so they
+       simply added up. now they are pulled down when they pile up. */
+    bus = ctx.createGain(); bus.gain.value = 1;
+    duck = ctx.createGain(); duck.gain.value = 1;
+    var lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -18; lim.knee.value = 6;
+    lim.ratio.value = 12; lim.attack.value = 0.004; lim.release.value = 0.18;
+    bus.connect(duck); duck.connect(lim); lim.connect(ctx.destination);
+
     /* the shaft itself: moving air, a long way down */
     var a = ctx.createBufferSource(); a.buffer = noise(4); a.loop = true;
     airLp = ctx.createBiquadFilter(); airLp.type = 'lowpass';
     airLp.frequency.value = 220; airLp.Q.value = 0.7;
     airGain = ctx.createGain(); airGain.gain.value = 0.0001;
-    a.connect(airLp); airLp.connect(airGain); airGain.connect(ctx.destination);
+    a.connect(airLp); airLp.connect(airGain); airGain.connect(bus);
     a.start();
-    airGain.gain.linearRampToValueAtTime(0.10, ctx.currentTime + 6);
+    airGain.gain.linearRampToValueAtTime(0.055, ctx.currentTime + 6);
 
     /* the rope, which only speaks when it is asked to do something it would
        rather not */
@@ -451,7 +463,7 @@ var sound = (function () {
     strainLp = ctx.createBiquadFilter(); strainLp.type = 'bandpass';
     strainLp.frequency.value = 300; strainLp.Q.value = 1.6;
     strainGain = ctx.createGain(); strainGain.gain.value = 0;
-    s.connect(strainLp); strainLp.connect(strainGain); strainGain.connect(ctx.destination);
+    s.connect(strainLp); strainLp.connect(strainGain); strainGain.connect(bus);
     s.start(); ropeSrc = s;
   }
   function resume() {
@@ -460,33 +472,71 @@ var sound = (function () {
     }
   }
 
+  /* their voice used to be pulled into web audio so it could be panned to
+     wherever they were on the rope. it sounded lovely on headphones and it was
+     the reason the whole thing howled on a speaker: that path goes round the
+     browser's echo canceller, so their voice came out of your phone, into your
+     microphone, and back to them. the panning was the thing breaking it.
+
+     so the voice now plays plainly, through the element, on the path that has
+     the echo canceller on it. it is only tapped — never routed — so that the
+     game can hear how loud they are and get out of the way. everything else
+     is still placed in the stereo field; it is only their voice that is not. */
+  var vAn = null, vBuf = null;
   function voice(stream) {
     if (!ctx) start();
-    if (!ctx) return;
     hasVoice = true;
     voiceEl = document.createElement('audio');
-    voiceEl.srcObject = stream; voiceEl.muted = true; voiceEl.autoplay = true;
+    voiceEl.srcObject = stream; voiceEl.autoplay = true;
+    voiceEl.setAttribute('playsinline', '');
     voiceEl.setAttribute('hidden', '');
     document.body.appendChild(voiceEl);
     voiceEl.play().catch(function () {});
-    var src = ctx.createMediaStreamSource(stream);
-    voicePan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-    voiceGain = ctx.createGain(); voiceGain.gain.value = 1;
-    if (voicePan) { src.connect(voicePan); voicePan.connect(voiceGain); }
-    else src.connect(voiceGain);
-    voiceGain.connect(ctx.destination);
+    if (!ctx) return;
+    try {
+      var src = ctx.createMediaStreamSource(stream);
+      vAn = ctx.createAnalyser(); vAn.fftSize = 256;
+      vBuf = new Uint8Array(vAn.fftSize);
+      src.connect(vAn);            /* a tap. it goes nowhere after this. */
+    } catch (e) { vAn = null; }
+  }
+
+  /* how loud they are talking, 0 to 1 */
+  function speech() {
+    if (!vAn) return 0;
+    vAn.getByteTimeDomainData(vBuf);
+    var peak = 0;
+    for (var i = 0; i < vBuf.length; i++) {
+      var d = Math.abs(vBuf[i] - 128);
+      if (d > peak) peak = d;
+    }
+    return Math.min(1, peak / 40);
   }
 
   /* side: where they are, left to right. up: how far above or below.
      strain: how hard the rope is being asked. depth: how high you are.     */
-  function update(side, near, strain, depth) {
+  function update(side, near, strain, depth, dt) {
     if (!ctx) return;
     var t = ctx.currentTime;
-    if (voicePan) voicePan.pan.setTargetAtTime(side * 0.85, t, 0.09);
-    if (voiceGain) voiceGain.gain.setTargetAtTime(0.4 + near * 0.7, t, 0.12);
-    strainGain.gain.setTargetAtTime(strain * strain * 0.30, t, 0.05);
-    strainLp.frequency.setTargetAtTime(230 + strain * 1500, t, 0.05);
+
+    /* the rope used to sing in proportion to how taut it was, so hanging at
+       full stretch — which is most of the time now that it never breaks —
+       was a held scream that never went anywhere. it is the *change* that is
+       worth hearing. a steady pull says nothing; being yanked says
+       everything. so it answers to how fast the strain is moving, and then
+       falls away on its own. */
+    var moved = Math.abs(strain - lastStrain) / Math.max(1e-4, dt || 0.016);
+    lastStrain = strain;
+    tug = Math.max(tug * Math.pow(0.06, (dt || 0.016)), Math.min(1, moved * 0.55));
+    var body = strain * strain * 0.055;            /* a whisper while held */
+    strainGain.gain.setTargetAtTime(body + tug * 0.20, t, 0.04);
+    strainLp.frequency.setTargetAtTime(230 + (strain * 0.4 + tug * 0.6) * 1500, t, 0.05);
+
     airLp.frequency.setTargetAtTime(160 + depth * 420, t, 1.5);
+
+    /* and when they are talking, the shaft gets out of the way */
+    var sp = speech();
+    if (duck) duck.gain.setTargetAtTime(1 - sp * 0.62, t, sp > 0.15 ? 0.05 : 0.35);
   }
 
   function ping(f0, f1, dur, type, vol, pan) {
@@ -518,13 +568,19 @@ var sound = (function () {
     gn.gain.setValueAtTime(0.0001, t);
     gn.gain.exponentialRampToValueAtTime(vol, t + 0.03);
     gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(bp); bp.connect(gn); gn.connect(ctx.destination);
+    s.connect(bp); bp.connect(gn); gn.connect(bus);
     s.start(t); s.stop(t + dur + 0.1);
   }
 
   return {
     start: start, resume: resume, voice: voice, update: update,
     heard: function () { return hasVoice; },
+    speech: speech,
+    /* for driving it from outside and seeing what it is actually doing */
+    probe: function () { return strainGain ? {
+      strain: +strainGain.gain.value.toFixed(4),
+      tug: +tug.toFixed(3), air: +airGain.gain.value.toFixed(4),
+      duck: duck ? +duck.gain.value.toFixed(3) : 1 } : null; },
     cast:  function () { rush(0.34, 0.10, 900, 240); },
     catch_:function () { ping(300, 150, 0.22, 'sine', 0.13); },
     miss:  function () { ping(150, 90, 0.5, 'sine', 0.06); },
@@ -1028,6 +1084,7 @@ function frame(ms) {
     wire.send(p);
   }
 
+  lastDt = dt;
   hear();
   draw();
 }
@@ -1038,13 +1095,14 @@ function tornBits() {
   return v;
 }
 
+var lastDt = 0.016;
 function hear() {
   var dx = you.sx - me.x, dy = you.sy - me.y;
   var d = Math.sqrt(dx*dx + dy*dy);
   var side = Math.max(-1, Math.min(1, dx / 0.5));
   var near = Math.max(0, 1 - d / 0.9);
   var strain = Math.max(0, Math.min(1, (d - REST) / (ROPE - REST)));
-  sound.update(side, near, strain, Math.min(1, me.y / TOP));
+  sound.update(side, near, strain, Math.min(1, me.y / TOP), lastDt);
 }
 
 /* ------------------------------------------------------------------ drawing
