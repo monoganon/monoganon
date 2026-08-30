@@ -180,7 +180,7 @@ var wire = (function () {
 
   function read(e) {
     var m; try { m = JSON.parse(e.data); } catch (err) { return; }
-    if (m.sdp) return negotiated(m.sdp);
+    if (m.sdp) return inTurn(function () { return negotiated(m.sdp); });
     if (onMsg) onMsg(m);
   }
 
@@ -204,7 +204,18 @@ var wire = (function () {
     cc.onmessage = read;
   }
 
-  async function host() {
+  /* everything that touches the description waits its turn. two taps on a
+     button used to start two conversations at once, and the second arrived to
+     find the first already done — 'called in wrong state: stable'. */
+  var queue = Promise.resolve();
+  function inTurn(fn) {
+    var next = queue.then(fn, fn);
+    queue = next.catch(function () {});
+    return next;
+  }
+
+  async function opening() {
+    if (pc) throw new Error('you already have a thread open.');
     role = 'host'; build();
     wireChannel(pc.createDataChannel('thread', { ordered: false, maxRetransmits: 0 }));
     wireControl(pc.createDataChannel('say', { ordered: true }));
@@ -213,7 +224,8 @@ var wire = (function () {
     return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
   }
 
-  async function take(blob) {
+  async function taking(blob) {
+    if (pc) throw new Error('you already have a thread. reload to start over.');
     role = 'guest'; build();
     pc.ondatachannel = function (e) {
       if (e.channel.label === 'say') wireControl(e.channel); else wireChannel(e.channel);
@@ -225,23 +237,40 @@ var wire = (function () {
     return pack({ t: pc.localDescription.type, s: pc.localDescription.sdp });
   }
 
-  async function tie(blob) {
+  async function tying(blob) {
     var a = await unpack(blob);
+    if (!pc) throw new Error('open a thread first.');
+    if (a.t !== 'answer')
+      throw new Error('that is an opening, not a reply. if you both opened one,' +
+                      ' one of you should take the other\'s instead.');
+    if (pc.signalingState !== 'have-local-offer')
+      throw new Error(pc.currentRemoteDescription
+        ? 'this one is already tied.'
+        : 'that cannot go on here yet — open a thread first.');
+    if (a.s === pc.localDescription.sdp)
+      throw new Error('that is your own thread come back to you. it wants theirs.');
     await pc.setRemoteDescription({ type: a.t, sdp: a.s });
   }
+
+  function host() { return inTurn(opening); }
+  function take(b) { return inTurn(function () { return taking(b); }); }
+  function tie(b) { return inTurn(function () { return tying(b); }); }
 
   /* the voice, added afterwards so it never has to be pasted. only the host
      ever offers, so the two of them can never talk over each other */
   async function negotiated(d) {
     if (d.type === 'offer') {
+      if (pc.signalingState !== 'stable')
+        await pc.setLocalDescription({ type: 'rollback' });
       await pc.setRemoteDescription(d);
       if (mine) addMine();
       await pc.setLocalDescription(await pc.createAnswer());
       await gathered();
       sure({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
-    } else {
+    } else if (pc.signalingState === 'have-local-offer') {
       await pc.setRemoteDescription(d);
     }
+    /* an answer to an offer already settled. it has nothing left to say. */
   }
 
   function addMine() {
@@ -251,6 +280,7 @@ var wire = (function () {
 
   async function offerVoice() {
     if (role !== 'host' || !pc) return;
+    if (pc.signalingState !== 'stable') return;
     if (mine) addMine();
     else pc.addTransceiver('audio', { direction: 'recvonly' });
     await pc.setLocalDescription(await pc.createOffer());
@@ -721,28 +751,33 @@ async function askMic() {
 
 /* ------------------------------------------------------------- the panel */
 
-document.getElementById('b-host').onclick = async function () {
+once('b-host', async function () {
   show('s-host'); tell('making a thread...');
-  try {
-    document.getElementById('t-offer').value = await wire.host();
-    tell('');
-  } catch (e) { tell(String(e.message || e)); }
-};
+  document.getElementById('t-offer').value = await wire.host();
+  tell('');
+});
 document.getElementById('b-join').onclick = function () { show('s-join'); tell(''); };
 
-document.getElementById('b-take').onclick = async function () {
+/* a button that is already working does not want asking again */
+function once(id, job) {
+  var b = document.getElementById(id);
+  b.onclick = async function () {
+    if (b.disabled) return;
+    b.disabled = true;
+    try { await job(); } catch (e) { tell(String(e.message || e)); }
+    b.disabled = false;
+  };
+}
+once('b-take', async function () {
   tell('taking it...');
-  try {
-    document.getElementById('t-reply').value = await wire.take(document.getElementById('t-in').value);
-    show('s-reply'); tell('');
-  } catch (e) { tell(String(e.message || e)); }
-};
-
-document.getElementById('b-tie').onclick = async function () {
+  document.getElementById('t-reply').value = await wire.take(document.getElementById('t-in').value);
+  show('s-reply'); tell('');
+});
+once('b-tie', async function () {
   tell('tying...');
-  try { await wire.tie(document.getElementById('t-answer').value); tell('waiting for it to take...'); }
-  catch (e) { tell(String(e.message || e)); }
-};
+  await wire.tie(document.getElementById('t-answer').value);
+  tell('waiting for it to take...');
+});
 
 function copier(id) {
   return function () {
