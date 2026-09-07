@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>·</title>
+<style>
+  html, body { margin:0; padding:0; min-height:100%; background:#000; overflow:hidden;
+               font-family:"Courier New",courier,monospace; color:#8d97a8; }
+  #room { position:fixed; left:0; top:0; right:0; bottom:0; display:flex;
+          align-items:center; justify-content:center; text-align:center; }
+  .card { width:min(90vw, 560px); }
+  p { font-size:12px; line-height:2.2; letter-spacing:0.06em; margin:0 0 2.4em 0; }
+  #hint { color:#3f4854; font-size:11px; opacity:0; transition:opacity 4s ease-in; }
+  #hint.on { opacity:1; }
+  input { font:inherit; font-size:13px; letter-spacing:0.45em; text-align:center;
+          text-transform:lowercase; color:#e2ebf8; background:transparent;
+          border:0; border-bottom:1px solid #2b323d; outline:none;
+          padding:8px 4px; width:min(70vw, 300px); }
+  input::placeholder { color:#2b323d; letter-spacing:0.3em; }
+  .shiver { animation:sh .38s; }
+  @keyframes sh { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-5px)}
+                  50%{transform:translateX(4px)} 80%{transform:translateX(-2px)} }
+  /* and what is through it */
+  #open { position:fixed; left:0; top:0; right:0; bottom:0; display:none; }
+  #open.on { display:block; }
+  canvas { position:fixed; left:0; top:0; width:100vw; height:100vh; display:block; }
+  #word { position:fixed; left:0; right:0; bottom:7vh; text-align:center;
+          font-size:11px; letter-spacing:0.42em; color:#4b5566; }
+  .fade { transition:opacity 2.2s ease; opacity:0; }
+</style>
+</head>
+<body>
+
+<div id="room">
+  <div class="card">
+    <!-- THE RIDDLE. change these lines and the word below together. -->
+    <p>One of them kept a house,<br>
+       and the house outlived the man.<br>
+       Walk the hedges until you are told its name,<br>
+       then give it here.</p>
+    <input id="in" autocomplete="off" autocorrect="off" autocapitalize="off"
+           spellcheck="false" placeholder="·····">
+    <p id="hint">the hedges are at <a href="labyrinth.html" style="color:#4b5566">/labyrinth</a></p>
+  </div>
+</div>
+
+<div id="open">
+  <canvas id="v"></canvas>
+  <div id="word"></div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* THE WORD.
+   Not kept here in the open, only the print of it, so that reading the page
+   does not hand it over. To change it: sha256 of the answer, lowercase, no
+   spaces or punctuation. The song is looked for under that same word, so
+   changing it means renaming the file too.
+
+     node -e "console.log(require('crypto').createHash('sha256').update('yourword').digest('hex'))"
+*/
+var PRINT = 'be8381be782bffc96afa89259ab2d1bad83360314a87fc63870b8cc267b7f6ea';
+var HERE  = 'sounds/';          /* + the word + .mp3 */
+
+var room = document.getElementById('room');
+var open = document.getElementById('open');
+var box  = document.getElementById('in');
+var hint = document.getElementById('hint');
+var word = document.getElementById('word');
+var canvas = document.getElementById('v');
+var g = canvas.getContext('2d');
+
+var wrong = 0;
+
+function plain(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function print(s) {
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  var b = new Uint8Array(buf), out = '';
+  for (var i = 0; i < b.length; i++) out += b[i].toString(16).padStart(2, '0');
+  return out;
+}
+
+box.addEventListener('keydown', async function (e) {
+  if (e.key !== 'Enter') return;
+  var said = plain(box.value);
+  if (!said) return;
+  var ok = false;
+  try { ok = (await print(said)) === PRINT; } catch (err) { ok = false; }
+  if (ok) return through(said);
+
+  /* no telling off. it simply does not give */
+  wrong++;
+  box.value = '';
+  box.classList.remove('shiver');
+  void box.offsetWidth;
+  box.classList.add('shiver');
+  /* after a while, one nudge toward where the name is kept */
+  if (wrong >= 4) hint.className = 'on';
+});
+
+/* ------------------------------------------------------------------ through */
+
+var audio = null, an = null, data = null, playing = false;
+
+function through(said) {
+  room.className = 'fade';
+  setTimeout(function () { room.style.display = 'none'; }, 2200);
+  open.className = 'on';
+  size();
+
+  audio = new Audio(HERE + said + '.mp3');
+  audio.crossOrigin = 'anonymous';
+  audio.loop = false;
+  audio.addEventListener('error', function () {
+    word.textContent = 'the room is empty for now';
+  });
+  audio.addEventListener('playing', function () { playing = true; });
+  audio.addEventListener('ended', function () { word.textContent = 'again?'; });
+
+  audio.play().then(function () {
+    word.textContent = said;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var ctx = new AC();
+      var src = ctx.createMediaElementSource(audio);
+      an = ctx.createAnalyser(); an.fftSize = 2048;
+      data = new Uint8Array(an.fftSize);
+      src.connect(an); an.connect(ctx.destination);
+    } catch (err) { an = null; }
+  }, function (err) {
+    /* nothing to play is not the same as not being allowed to play yet */
+    if (audio.error || (err && err.name === 'NotSupportedError')) {
+      word.textContent = 'the room is empty for now';
+      return;
+    }
+    word.textContent = 'touch anywhere';
+    document.addEventListener('pointerdown', function once() {
+      document.removeEventListener('pointerdown', once);
+      audio.play().then(function () { word.textContent = said; }, function () {});
+    });
+  });
+
+  requestAnimationFrame(draw);
+}
+
+/* a line, and the song moving it */
+var W = 1, H = 1, U = 1, t = 0;
+function size() {
+  U = Math.min(window.devicePixelRatio || 1, 2);
+  W = canvas.width = Math.floor(window.innerWidth * U);
+  H = canvas.height = Math.floor(window.innerHeight * U);
+}
+window.addEventListener('resize', function () { if (open.className === 'on') size(); });
+
+function draw() {
+  requestAnimationFrame(draw);
+  t += 0.016;
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, W, H);
+
+  var y = H * 0.5, x0 = W * 0.08, x1 = W * 0.92, n = 220;
+  if (an) an.getByteTimeDomainData(data);
+
+  g.beginPath();
+  for (var i = 0; i <= n; i++) {
+    var f = i / n;
+    var x = x0 + (x1 - x0) * f;
+    var v = 0;
+    if (an) {
+      var s = data[Math.floor(f * (data.length - 1))] / 128 - 1;
+      v = s * H * 0.16;
+    } else {
+      v = Math.sin(f * 9 + t * 1.4) * H * 0.006;      /* breathing, before it starts */
+    }
+    /* faint at both ends, so it never quite begins or ends */
+    var edge = Math.sin(Math.PI * f);
+    var yy = y + v * edge;
+    if (i === 0) g.moveTo(x, yy); else g.lineTo(x, yy);
+  }
+  var lg = g.createLinearGradient(x0, 0, x1, 0);
+  lg.addColorStop(0, 'rgba(160,178,206,0)');
+  lg.addColorStop(0.5, 'rgba(200,216,240,0.85)');
+  lg.addColorStop(1, 'rgba(160,178,206,0)');
+  g.strokeStyle = lg;
+  g.lineWidth = 1.1 * U;
+  g.stroke();
+}
+
+box.focus();
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
