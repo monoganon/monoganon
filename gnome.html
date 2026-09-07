@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/png" href="Images/favicon.png.ico">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Gnome</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden;
+               font-family:"Courier New",courier,monospace; color:#c9d2e0; }
+  #wrap { position:fixed; left:0; top:0; right:0; bottom:0;
+          display:flex; align-items:center; justify-content:center; }
+  canvas { image-rendering:pixelated; image-rendering:crisp-edges;
+           touch-action:none; display:block; }
+  /* what is under the ground */
+  #deep { position:fixed; left:0; top:0; right:0; bottom:0; background:#000;
+          display:none; align-items:center; justify-content:center; text-align:center; }
+  #deep.on { display:flex; }
+  #deep h1 { font-size:13px; letter-spacing:0.6em; font-weight:normal;
+             color:#8d97a8; margin:0 0 2.4em 0; }
+  #deep p { font-size:11px; letter-spacing:0.16em; color:#5c6675; line-height:2.2; margin:0; }
+  #deep a { color:#8d97a8; }
+  .quiet { opacity:0; transition:opacity 2.4s ease-in; }
+  .quiet.lit { opacity:1; }
+</style>
+</head>
+<body>
+
+<div id="wrap"><canvas id="c"></canvas></div>
+
+<div id="deep">
+  <div class="quiet" id="card">
+    <h1>Gnome</h1>
+    <p id="line">·</p>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+var TS = 16, COLS = 16, ROWS = 11;
+var VW = COLS * TS, VH = ROWS * TS;      /* 256 x 176, the old proportions */
+
+var canvas = document.getElementById('c');
+var g = canvas.getContext('2d');
+canvas.width = VW; canvas.height = VH;
+g.imageSmoothingEnabled = false;
+
+/* ------------------------------------------------------------------ paint */
+
+var P = {
+  '.': null,
+  k: '#241408', r: '#c42828', d: '#8c1414', s: '#f0b080',
+  w: '#f4f4f4', g: '#c0c0c0', b: '#3050b8', n: '#1c3078'
+};
+
+/* he is drawn without feet; they are put on afterwards so he can walk */
+var GNOME = {
+  down: [
+    "...kkkkk...",
+    "..krrrrrk..",
+    "..krrrrrk..",
+    ".krrrrrrrk.",
+    ".krrrrrrrk.",
+    "kddrrrrrddk",
+    ".ksssssssk.",
+    ".kswwwwwsk.",
+    "..kwwwwwk..",
+    "..bkwwwkb..",
+    ".bbbkgkbbb."
+  ],
+  up: [
+    "...kkkkk...",
+    "..krrrrrk..",
+    "..krrrrrk..",
+    ".krrrrrrrk.",
+    ".krrrrrrrk.",
+    "kddrrrrrddk",
+    ".kwwwwwwwk.",
+    ".kwwwwwwwk.",
+    "..kwwwwwk..",
+    "..bkwwwkb..",
+    ".bbbkkkbbb."
+  ],
+  side: [
+    "...kkkk....",
+    "..krrrrk...",
+    "..krrrrrk..",
+    ".krrrrrrk..",
+    ".krrrrrrk..",
+    "kddrrrrrk..",
+    ".kssswwk...",
+    ".kswwwwwk..",
+    "..kwwwwwk..",
+    "..bkwwwk...",
+    ".bbbkkbb..."
+  ]
+};
+
+function stamp(rows, x, y, flip) {
+  for (var j = 0; j < rows.length; j++) {
+    var line = rows[j];
+    for (var i = 0; i < line.length; i++) {
+      var c = P[line[i]];
+      if (!c) continue;
+      g.fillStyle = c;
+      g.fillRect(x + (flip ? line.length - 1 - i : i), y + j, 1, 1);
+    }
+  }
+}
+
+/* a settled sort of randomness: the same tile is freckled the same way twice */
+function hash(x, y) {
+  var h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+  h = (h ^ (h >> 13)) * 1274126177;
+  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+}
+
+/* ------------------------------------------------------------------ world
+
+   #  rock, and the walls of everything
+   T  tree      two swings
+   b  bush      one
+   c  cracked   three, and then a way through
+   ,  grass     one, and you may walk in it
+   K  the one blade of grass with something underneath
+   k  the keyhole, once it has been found
+   .  ground                                                              */
+
+var ROOMS = {
+  '0,1': [                                   /* the garden, where he starts */
+    "################",
+    "#........b.....#",
+    "#....,,........#",
+    "#....,,.....b..#",
+    "#..............#",
+    "#...........bb..",
+    "#..............#",
+    "#...,,,........#",
+    "#...,,,....b...#",
+    "#..b...........#",
+    "################"
+  ],
+  '1,1': [                                              /* the close wood */
+    "################",
+    "#....TT...T....#",
+    "#..T.TT..TT..T.#",
+    "#..TTT..TTT....#",
+    "#...TT...TT..T.#",
+    "....TTT.TTTT....",
+    "#..TTT...TT....#",
+    "#...TT..TTT..T.#",
+    "#..T..T..TT....#",
+    "#....T....T....#",
+    "################"
+  ],
+  '2,1': [                                                    /* the wall */
+    "#######..#######",
+    "#..............#",
+    "#..............#",
+    "#..............#",
+    "######ccc#######",
+    "#..............#",
+    "#..............#",
+    "#..............#",
+    "...............#",
+    "#..............#",
+    "################"
+  ],
+  '2,0': [                                                  /* the meadow */
+    "################",
+    "#....,,,,,,....#",
+    "#..,,,,,,,,,,..#",
+    "#..,,,,,,,,,,..#",
+    "#..,,,,,K,,,,..#",
+    "#..,,,,,,,,,,..#",
+    "#..,,,,,,,,,,..#",
+    "#....,,,,,,....#",
+    "#..............#",
+    "#..............#",
+    "#######..#######"
+  ]
+};
+
+var SOLID = { '#':1, 'T':1, 'b':1, 'c':1 };
+var LIFE  = { 'T':2, 'b':1, 'c':3, ',':1, 'K':1 };
+
+var live = {};                     /* rooms as they are now, once cut about */
+function room(key) {
+  if (!live[key]) {
+    var src = ROOMS[key], out = [];
+    for (var j = 0; j < src.length; j++) out.push(src[j].split(''));
+    live[key] = { t: out, hurt: {} };
+  }
+  return live[key];
+}
+
+var at = '0,1';
+function tileAt(key, cx, cy) {
+  if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return '#';
+  return room(key).t[cy][cx];
+}
+function solidAt(key, cx, cy) { return !!SOLID[tileAt(key, cx, cy)]; }
+
+/* ------------------------------------------------------------------ him */
+
+var him = { x: 3 * TS + 8, y: 5 * TS + 8, dir: 'down', step: 0, swing: 0, hit: false,
+            fall: 0 };
+var HALF = 4;                                       /* he is small, as told */
+
+function cell(v) { return Math.floor(v / TS); }   /* -1 is off the map, not row 0 */
+
+function blocked(px, py) {
+  var l = px - HALF, r = px + HALF - 1, t = py - 2, b = py + HALF + 2;
+  return solidAt(at, cell(l), cell(t)) || solidAt(at, cell(r), cell(t)) ||
+         solidAt(at, cell(l), cell(b)) || solidAt(at, cell(r), cell(b));
+}
+
+/* ---------------------------------------------------------------- doings */
+
+var phase = 'title';        /* title | walk | drop | deep */
+var slide = null;           /* one room sliding off while the next comes on */
+var bits = [];              /* leaves, in the air */
+var found = false, keyAt = null, clock = 0;
+
+function chop() {
+  if (him.swing > 0) return;
+  him.swing = 0.24; him.hit = false;
+  sfx('swing');
+}
+
+function reach() {
+  var dx = him.dir === 'left' ? -11 : him.dir === 'right' ? 11 : 0;
+  var dy = him.dir === 'up' ? -12 : him.dir === 'down' ? 10 : 0;
+  var cx = cell(him.x + dx), cy = cell(him.y + dy);
+  if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return;
+
+  var R = room(at), tile = R.t[cy][cx];
+  if (!LIFE[tile]) return;
+
+  var id = cx + ',' + cy;
+  R.hurt[id] = (R.hurt[id] || 0) + 1;
+  var left = LIFE[tile] - R.hurt[id];
+
+  for (var i = 0; i < (left <= 0 ? 9 : 4); i++)
+    bits.push({ x: cx * TS + 8, y: cy * TS + 9,
+                vx: (Math.random() - 0.5) * 40, vy: -14 - Math.random() * 26,
+                life: 0.5 + Math.random() * 0.3,
+                c: tile === 'c' || tile === '#' ? '#8c8c8c'
+                   : tile === 'T' ? '#1c4c18' : '#58b048' });
+
+  if (left > 0) { sfx('tap'); return; }
+
+  delete R.hurt[id];
+  if (tile === 'K') {
+    R.t[cy][cx] = 'k';
+    found = true; keyAt = { x: cx, y: cy };
+    sfx('secret');
+  } else {
+    R.t[cy][cx] = '.';
+    sfx(tile === 'c' ? 'break' : 'cut');
+  }
+}
+
+/* --------------------------------------------------------------- the ear */
+
+var ac = null;
+function ear() {
+  if (ac) return ac;
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  ac = new AC();
+  return ac;
+}
+
+function blip(f0, f1, dur, type, vol) {
+  var c = ear(); if (!c) return;
+  var t = c.currentTime;
+  var o = c.createOscillator(), gn = c.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  gn.gain.setValueAtTime(0.0001, t);
+  gn.gain.exponentialRampToValueAtTime(vol || 0.07, t + 0.008);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(gn); gn.connect(c.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+
+function rush(dur, vol, hp) {
+  var c = ear(); if (!c) return;
+  var t = c.currentTime, n = Math.floor(c.sampleRate * dur);
+  var buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  var src = c.createBufferSource(); src.buffer = buf;
+  var f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp || 900;
+  var gn = c.createGain(); gn.gain.value = vol || 0.10;
+  src.connect(f); f.connect(gn); gn.connect(c.destination);
+  src.start(t);
+}
+
+function sfx(what) {
+  if (what === 'swing') rush(0.09, 0.05, 1800);
+  else if (what === 'tap') blip(300, 170, 0.07, 'square', 0.06);
+  else if (what === 'cut') { rush(0.13, 0.09, 1200); blip(520, 300, 0.09, 'triangle', 0.05); }
+  else if (what === 'break') { rush(0.30, 0.16, 500); blip(180, 60, 0.28, 'square', 0.08); }
+  else if (what === 'step') {
+    var n = [523, 659, 784, 1047];
+    for (var i = 0; i < 4; i++) (function (k) {
+      setTimeout(function () { blip(n[k], n[k], 0.10, 'square', 0.05); }, k * 85);
+    })(i);
+  }
+  else if (what === 'secret') {
+    var m = [659, 784, 988, 1319, 1568];
+    for (var j = 0; j < 5; j++) (function (k) {
+      setTimeout(function () { blip(m[k], m[k], 0.13, 'square', 0.06); }, k * 95);
+    })(j);
+  }
+  else if (what === 'fall') blip(700, 40, 1.1, 'sine', 0.10);
+}
+
+/* ------------------------------------------------------------------ hands */
+
+var keys = {};
+var stick = { on: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
+
+document.addEventListener('keydown', function (e) {
+  var k = e.key;
+  if (k === 'ArrowLeft' || k === 'a') keys.left = true;
+  if (k === 'ArrowRight' || k === 'd') keys.right = true;
+  if (k === 'ArrowUp' || k === 'w') keys.up = true;
+  if (k === 'ArrowDown' || k === 's') keys.down = true;
+  if ([' ', 'z', 'x', 'Enter'].indexOf(k) >= 0) {
+    if (phase === 'title') { phase = 'walk'; ear(); }
+    else chop();
+    e.preventDefault();
+  }
+  if (phase === 'title' && k.length === 1) { phase = 'walk'; ear(); }
+});
+document.addEventListener('keyup', function (e) {
+  var k = e.key;
+  if (k === 'ArrowLeft' || k === 'a') keys.left = false;
+  if (k === 'ArrowRight' || k === 'd') keys.right = false;
+  if (k === 'ArrowUp' || k === 'w') keys.up = false;
+  if (k === 'ArrowDown' || k === 's') keys.down = false;
+});
+
+/* a thumb on the left to walk with, the right half to swing */
+canvas.addEventListener('pointerdown', function (e) {
+  if (phase === 'title') { phase = 'walk'; ear(); return; }
+  var r = canvas.getBoundingClientRect();
+  if (e.clientX - r.left < r.width * 0.5) {
+    stick.on = true; stick.id = e.pointerId;
+    stick.ox = e.clientX; stick.oy = e.clientY; stick.dx = 0; stick.dy = 0;
+    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+  } else chop();
+});
+canvas.addEventListener('pointermove', function (e) {
+  if (!stick.on || e.pointerId !== stick.id) return;
+  if (e.pointerType === 'mouse' && e.buttons === 0) { drop(); return; }
+  stick.dx = e.clientX - stick.ox; stick.dy = e.clientY - stick.oy;
+});
+function drop() { stick.on = false; stick.id = null; stick.dx = stick.dy = 0; }
+canvas.addEventListener('pointerup', drop);
+canvas.addEventListener('pointercancel', drop);
+canvas.addEventListener('lostpointercapture', drop);
+window.addEventListener('pointerup', drop);
+window.addEventListener('blur', function () { keys = {}; drop(); });
+
+/* ------------------------------------------------------------------ along */
+
+var SPEED = 72;
+var last = 0;
+
+function step(dt) {
+  /* leaves come down wherever they are */
+  for (var i = bits.length - 1; i >= 0; i--) {
+    var b = bits[i];
+    b.life -= dt;
+    if (b.life <= 0) { bits.splice(i, 1); continue; }
+    b.x += b.vx * dt; b.y += b.vy * dt; b.vy += 150 * dt;
+  }
+
+  if (phase === 'drop') {
+    him.fall += dt;
+    if (him.fall > 1.3) under();
+    return;
+  }
+  if (phase !== 'walk' || slide) return;
+
+  var mx = 0, my = 0;
+  if (keys.left) mx -= 1;
+  if (keys.right) mx += 1;
+  if (keys.up) my -= 1;
+  if (keys.down) my += 1;
+  if (stick.on) {
+    var d = Math.sqrt(stick.dx * stick.dx + stick.dy * stick.dy);
+    if (d > 10) { mx += stick.dx / d; my += stick.dy / d; }
+  }
+
+  if (him.swing > 0) {
+    him.swing -= dt;
+    if (!him.hit && him.swing < 0.17) { him.hit = true; reach(); }
+    mx = my = 0;
+  }
+
+  var len = Math.sqrt(mx * mx + my * my);
+  if (len > 0) {
+    mx /= len; my /= len;
+    if (Math.abs(mx) > Math.abs(my)) him.dir = mx < 0 ? 'left' : 'right';
+    else him.dir = my < 0 ? 'up' : 'down';
+    him.step += dt * 7;
+
+    var nx = him.x + mx * SPEED * dt;
+    if (!blocked(nx, him.y)) him.x = nx;
+    var ny = him.y + my * SPEED * dt;
+    if (!blocked(him.x, ny)) him.y = ny;
+  } else him.step = 0;
+
+  /* out one side and into the next field along */
+  var here = at.split(',').map(Number);
+  var to = null, put = null;
+  if (him.x <= 6)            { to = [here[0] - 1, here[1]]; put = { x: VW - 8, y: him.y }; }
+  else if (him.x >= VW - 6)  { to = [here[0] + 1, here[1]]; put = { x: 8, y: him.y }; }
+  else if (him.y <= 6)       { to = [here[0], here[1] - 1]; put = { x: him.x, y: VH - 10 }; }
+  else if (him.y >= VH - 7)  { to = [here[0], here[1] + 1]; put = { x: him.x, y: 10 }; }
+  if (to) {
+    var key = to[0] + ',' + to[1];
+    if (ROOMS[key]) {
+      slide = { from: at, to: key, t: 0,
+                dx: put.x < him.x ? 1 : put.x > him.x ? -1 : 0,
+                dy: put.y < him.y ? 1 : put.y > him.y ? -1 : 0 };
+      at = key; him.x = put.x; him.y = put.y;
+    } else {
+      him.x = Math.max(8, Math.min(VW - 8, him.x));
+      him.y = Math.max(8, Math.min(VH - 8, him.y));
+    }
+  }
+
+  /* and if he is standing on the way down, he takes it */
+  if (found && keyAt && at === '2,0') {
+    var cx = cell(him.x), cy = cell(him.y);
+    if (cx === keyAt.x && cy === keyAt.y) { phase = 'drop'; him.fall = 0; sfx('fall'); }
+  }
+}
+
+/* ------------------------------------------------------------------ shown */
+
+function ground(cx, cy, meadow) {
+  var h = hash(cx, cy);
+  g.fillStyle = meadow ? '#4c9c3c' : '#c8a058';
+  g.fillRect(cx * TS, cy * TS, TS, TS);
+  g.fillStyle = meadow ? '#449034' : '#bc9450';
+  for (var i = 0; i < 3; i++) {
+    var q = hash(cx * 7 + i, cy * 13 + i);
+    g.fillRect(cx * TS + ((q * 14) | 0), cy * TS + ((hash(i, cx + cy) * 14) | 0), 2, 1);
+  }
+  if (h > 0.93) { g.fillStyle = meadow ? '#3c8430' : '#b08844';
+                  g.fillRect(cx * TS + 5, cy * TS + 6, 4, 3); }
+}
+
+function tile(ch, cx, cy, meadow, hurt) {
+  var x = cx * TS, y = cy * TS;
+  if (ch !== '#') ground(cx, cy, meadow);
+
+  if (ch === '#') {
+    g.fillStyle = '#8c8c8c'; g.fillRect(x, y, TS, TS);
+    g.fillStyle = '#5c5c5c';
+    g.fillRect(x, y + 7, TS, 2); g.fillRect(x + 7, y, 2, 7); g.fillRect(x + 3, y + 9, 2, 7);
+    g.fillStyle = '#c4c4c4'; g.fillRect(x + 1, y + 1, TS - 2, 1);
+  } else if (ch === 'c') {
+    g.fillStyle = '#8c8c8c'; g.fillRect(x, y, TS, TS);
+    g.fillStyle = '#5c5c5c'; g.fillRect(x, y + 7, TS, 2);
+    g.fillStyle = '#241408';
+    g.fillRect(x + 7, y + 1, 1, 5); g.fillRect(x + 6, y + 5, 1, 4);
+    g.fillRect(x + 8, y + 9, 1, 5);
+    if (hurt > 0) { g.fillRect(x + 3, y + 2, 1, 6); g.fillRect(x + 11, y + 6, 1, 7); }
+    if (hurt > 1) { g.fillRect(x + 2, y + 10, 6, 1); g.fillRect(x + 9, y + 3, 5, 1); }
+  } else if (ch === 'b') {
+    g.fillStyle = '#205c1c';
+    g.fillRect(x + 3, y + 2, 10, 12); g.fillRect(x + 2, y + 4, 12, 8);
+    g.fillStyle = '#388c2c';
+    g.fillRect(x + 4, y + 3, 8, 10); g.fillRect(x + 3, y + 5, 10, 6);
+    g.fillStyle = '#58b048';
+    g.fillRect(x + 4, y + 5, 3, 2); g.fillRect(x + 9, y + 7, 3, 2); g.fillRect(x + 6, y + 10, 3, 2);
+    if (hurt > 0) { g.fillStyle = '#205c1c'; g.fillRect(x + 3, y + 4, 4, 3); }
+  } else if (ch === 'T') {
+    g.fillStyle = '#7c4c1c'; g.fillRect(x + 6, y + 10, 4, 6);
+    g.fillStyle = '#1c4c18';
+    g.fillRect(x + 2, y, 12, 12); g.fillRect(x + 1, y + 2, 14, 8);
+    g.fillStyle = '#2c6c24';
+    g.fillRect(x + 3, y + 1, 10, 10); g.fillRect(x + 2, y + 3, 12, 6);
+    g.fillStyle = '#3c8c30';
+    g.fillRect(x + 3, y + 2, 4, 3); g.fillRect(x + 9, y + 4, 4, 3); g.fillRect(x + 5, y + 7, 4, 3);
+    if (hurt > 0) { g.fillStyle = '#1c4c18'; g.fillRect(x + 2, y + 1, 12, 4); }
+  } else if (ch === ',' || ch === 'K') {
+    g.fillStyle = '#74c464';
+    for (var i = 0; i < 5; i++) {
+      var q = hash(cx * 3 + i, cy * 5 + i);
+      var gx = x + 2 + ((q * 12) | 0), gy = y + 4 + ((hash(i + 9, cx * cy + i) * 9) | 0);
+      g.fillRect(gx, gy, 1, 4); g.fillRect(gx + 1, gy + 1, 1, 3);
+    }
+    g.fillStyle = '#4c9c3c';
+    g.fillRect(x + 3, y + 11, 3, 1); g.fillRect(x + 10, y + 9, 3, 1);
+  } else if (ch === 'k') {
+    /* a stone let into the ground, with the way down cut out of it */
+    var lit = 0.5 + 0.5 * Math.sin(clock * 3);
+    g.fillStyle = '#241408'; g.fillRect(x + 1, y + 1, 14, 14);
+    g.fillStyle = '#8c8c8c'; g.fillRect(x + 2, y + 2, 12, 12);
+    g.fillStyle = '#b8b8b8'; g.fillRect(x + 2, y + 2, 12, 1);
+    g.fillStyle = '#5c5c5c'; g.fillRect(x + 2, y + 13, 12, 1);
+    g.fillStyle = '#000';
+    g.fillRect(x + 6, y + 4, 4, 4);            /* the round of it */
+    g.fillRect(x + 7, y + 7, 2, 5);            /* and the slot below */
+    g.fillRect(x + 6, y + 10, 4, 2);
+    g.fillStyle = 'rgba(255,255,255,' + (0.10 + 0.22 * lit).toFixed(3) + ')';
+    g.fillRect(x + 5, y + 3, 1, 1); g.fillRect(x + 10, y + 11, 1, 1);
+  }
+}
+
+function paint(key, ox, oy) {
+  var R = room(key), meadow = key === '2,0';
+  g.save(); g.translate(ox, oy);
+  for (var cy = 0; cy < ROWS; cy++)
+    for (var cx = 0; cx < COLS; cx++)
+      tile(R.t[cy][cx], cx, cy, meadow, R.hurt[cx + ',' + cy] || 0);
+  g.restore();
+}
+
+function drawHim() {
+  var rows = him.dir === 'up' ? GNOME.up : him.dir === 'down' ? GNOME.down : GNOME.side;
+  var flip = him.dir === 'left';
+  var x = Math.round(him.x) - 5, y = Math.round(him.y) - 11;
+
+  if (phase === 'drop') {
+    /* he goes down into it, and the ground takes the last of him */
+    var k = Math.min(1, him.fall / 1.0);
+    var keep = Math.max(0, Math.floor(rows.length * (1 - k)));
+    if (keep > 0) stamp(rows.slice(0, keep), x, y + Math.floor(k * 11), flip);
+    return;
+  }
+
+  stamp(rows, x, y, flip);
+  var f = (Math.floor(him.step) % 2) === 0;
+  g.fillStyle = '#6c3c14';
+  if (him.dir === 'left' || him.dir === 'right') {
+    g.fillRect(x + (f ? 3 : 5), y + 11, 3, 2);
+  } else {
+    g.fillRect(x + 2, y + 11, 3, f ? 2 : 1);
+    g.fillRect(x + 6, y + 11, 3, f ? 1 : 2);
+  }
+
+  /* the axe, out and back */
+  if (him.swing > 0) {
+    var out = Math.sin((1 - him.swing / 0.24) * Math.PI) * 7;
+    var ax = him.x, ay = him.y;
+    if (him.dir === 'left') ax -= 5 + out; else if (him.dir === 'right') ax += 4 + out;
+    else if (him.dir === 'up') ay -= 8 + out; else ay += 4 + out;
+    g.fillStyle = '#7c4c1c'; g.fillRect(Math.round(ax) - 1, Math.round(ay) - 5, 2, 6);
+    g.fillStyle = '#dcdcdc'; g.fillRect(Math.round(ax) - 3, Math.round(ay) - 7, 6, 3);
+  }
+}
+
+function draw() {
+  if (phase === 'title') {
+    g.fillStyle = '#000'; g.fillRect(0, 0, VW, VH);
+    g.fillStyle = '#4c9c3c'; g.fillRect(0, VH - 34, VW, 34);
+    stamp(GNOME.down, VW / 2 - 5, VH - 52, false);
+    g.fillStyle = '#6c3c14'; g.fillRect(VW / 2 - 3, VH - 41, 3, 2); g.fillRect(VW / 2 + 1, VH - 41, 3, 2);
+    g.fillStyle = '#f4f4f4';
+    g.font = '16px "Courier New",monospace'; g.textAlign = 'center';
+    g.fillText('G N O M E', VW / 2, 54);
+    g.fillStyle = '#8d97a8'; g.font = '8px "Courier New",monospace';
+    g.fillText('arrows to walk   space to swing', VW / 2, 76);
+    g.fillText('press anything', VW / 2, VH - 60);
+    return;
+  }
+
+  if (slide) {
+    var k = Math.min(1, slide.t / 0.45), e = k * k * (3 - 2 * k);
+    paint(slide.from, slide.dx * VW * e, slide.dy * VH * e);
+    paint(slide.to, slide.dx * VW * (e - 1), slide.dy * VH * (e - 1));
+    return;
+  }
+
+  paint(at, 0, 0);
+  for (var i = 0; i < bits.length; i++) {
+    var b = bits[i];
+    g.fillStyle = b.c;
+    g.fillRect(Math.round(b.x), Math.round(b.y), 2, 2);
+  }
+  drawHim();
+
+  if (phase === 'drop') {
+    g.fillStyle = 'rgba(0,0,0,' + Math.min(1, him.fall / 1.3).toFixed(3) + ')';
+    g.fillRect(0, 0, VW, VH);
+  }
+}
+
+/* --------------------------------------------------------------- the song */
+
+function under() {
+  phase = 'deep';
+  document.getElementById('deep').className = 'on';
+  setTimeout(function () { document.getElementById('card').className = 'quiet lit'; }, 80);
+
+  var line = document.getElementById('line');
+  var song = new Audio('sounds/gnome.mp3');
+  song.addEventListener('error', function () { line.textContent = 'the song is not down here yet'; });
+  song.play().then(function () {
+    line.innerHTML = 'it is yours &nbsp;·&nbsp; ' +
+      '<a href="sounds/gnome.mp3" download="gnome.mp3">take it</a>';
+  }, function (err) {
+    if (song.error || (err && err.name === 'NotSupportedError')) {
+      line.textContent = 'the song is not down here yet';
+      return;
+    }
+    line.textContent = 'touch anywhere';
+    document.addEventListener('pointerdown', function once() {
+      document.removeEventListener('pointerdown', once);
+      song.play().then(function () {
+        line.innerHTML = 'it is yours &nbsp;·&nbsp; ' +
+          '<a href="sounds/gnome.mp3" download="gnome.mp3">take it</a>';
+      }, function () {});
+    });
+  });
+}
+
+/* ------------------------------------------------------------------- turn */
+
+function frame(ms) {
+  requestAnimationFrame(frame);
+  var now = ms * 0.001;
+  var dt = Math.min(now - last, 0.05) || 0.016;
+  last = now;
+  clock += dt;
+  if (slide) { slide.t += dt; if (slide.t >= 0.45) slide = null; }
+  step(dt);
+  draw();
+}
+
+function fit() {
+  var s = Math.max(1, Math.min(Math.floor(window.innerWidth / VW),
+                               Math.floor(window.innerHeight / VH)));
+  canvas.style.width = (VW * s) + 'px';
+  canvas.style.height = (VH * s) + 'px';
+}
+window.addEventListener('resize', fit);
+fit();
+requestAnimationFrame(frame);
+
+window.__gnome = { him: him, where: function () { return at; },
+                   phase: function () { return phase; },
+                   found: function () { return found; },
+                   go: function (k) { at = k; }, room: room };
+
+})();
+</script>
+<script data-goatcounter="https://monoganon.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
